@@ -16,6 +16,24 @@ It implements the `ISO/IEC 8632-3:1999` and `ISO/IEC 8632-4:1999` specification.
 
 Some additional functions for reading technical documentation items (Figures, Names) etc are also implemented.
 
+## Implementations
+
+This repository contains **two implementations**:
+
+### C# / .NET Implementation
+The original implementation for .NET Standard 2.0+, available as a NuGet package. See below for C# usage.
+
+### Python 3.12 Implementation
+A complete Python implementation for reading binary CGM files and converting to clear text format. Located in the [`python/`](python/) directory.
+
+**Quick Start (Python)**:
+```bash
+cd python
+python3 main.py input.cgm output.txt
+```
+
+See the [Python README](python/README.md) for complete documentation.
+
 ## Install
 Add the NuGet package [codessentials.CGM](https://nuget.org/packages/codessentials.CGM/) to any project supporting .NET Standard 2.0 or higher.
 
@@ -74,3 +92,46 @@ Name|Description
 -|-
 GetRectangles | Gets all rectangles of the given file.
 IsNearBy | Determines whether point A is near point b.
+
+## Python Implementation
+
+The [`python/`](python/) directory contains a complete Python 3.12 implementation for reading binary CGM files and converting them to clear text format.
+
+### Features
+- Read binary CGM files per ISO/IEC 8632-3:1999
+- Convert to clear text format per ISO/IEC 8632-4:1999
+- No external dependencies (uses Python standard library only)
+- Comprehensive test suite
+- Full documentation and examples
+
+### Quick Start
+```bash
+cd python
+
+# Run tests
+python3 test_cgm.py
+
+# Convert a file
+python3 main.py input.cgm output.txt
+```
+
+### Python API
+```python
+from cgm_file import convert_binary_to_cleartext
+
+# Quick conversion
+convert_binary_to_cleartext('input.cgm', 'output.txt')
+
+# Or use classes for more control
+from cgm_file import BinaryCGMFile, ClearTextCGMFile
+
+binary_cgm = BinaryCGMFile.read_binary('input.cgm')
+cleartext_cgm = ClearTextCGMFile(binary_cgm)
+cleartext_cgm.write_to_file('output.txt')
+```
+
+### Documentation
+- [Python README](python/README.md) - Complete documentation
+- [Quick Start Guide](python/QUICKSTART.md) - Get started quickly
+- [Examples](python/examples.py) - Usage examples
+- [Project Summary](python/PROJECT_SUMMARY.md) - Implementation details

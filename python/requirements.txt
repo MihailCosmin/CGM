@@ -1,0 +1,14 @@
+# CGM Python Library - Requirements
+# 
+# This library uses only Python standard library modules.
+# No external dependencies are required.
+#
+# Minimum Python version: 3.12
+#
+# To verify your Python version:
+#   python3 --version
+#
+# The library has been tested with Python 3.12 and should work
+# with any Python 3.12+ version.
+
+# No external packages required
