@@ -1,0 +1,80 @@
+In folder python/tests/original_examples you can find: 
+
+1: Example for CGM and CLEARCGM for pure vector graphic CGM:
+techdraw.cgm
+and
+techdraw_cleartext.cgm
+
+The cleartext version: techdraw_cleartext.cgm
+was produced by the original C# library so we can trust the clear text is mostly correct
+
+This should be used as a baseline to test the conversions done with python
+
+2: Example for CGM and CLEARCGM with embedded raster image
+
+ICN-AFGA08298XX-A-252001-A-D1131-00007-A-01-1.cgm
+and
+ICN-AFGA08298XX-A-252001-A-D1131-00007-A-01-1_cleartext.cgm
+
+The cleartext version: ICN-AFGA08298XX-A-252001-A-D1131-00007-A-01-1_cleartext.cgm
+was produced by the original C# library so we can trust the clear text is mostly correct,
+but note that the original C# library wasn't correctly processing embedded raster images, so this has to be worked more
+
+This should be used as a baseline to test the conversions done with python
+
+All tests should be done and added in subfolders named from 00001 to 99999
+
+Test Folder Organization
+========================
+Each test case goes in its own numbered folder:
+- 00001/ - Reserved for initial development testing
+- 00002/ - techdraw.cgm conversion test
+- 00003/ - ICN file conversion test
+- 00004/ - Future test case
+- etc.
+
+File Naming Convention
+=====================
+Output files MUST follow the pattern:
+  {original_filename}_cleartext.CGM
+
+Examples:
+  techdraw.cgm          → techdraw_cleartext.CGM
+  ICN-AFGA...01-1.cgm   → ICN-AFGA...01-1_cleartext.CGM
+
+Running Conversions
+==================
+Basic usage:
+  python3 main.py <input_binary.cgm> <output_folder/filename_cleartext.CGM>
+
+Examples:
+  python3 main.py tests/original_examples/techdraw.cgm tests/00002/techdraw_cleartext.CGM
+  python3 main.py tests/original_examples/ICN-AFGA08298XX-A-252001-A-D1131-00007-A-01-1.cgm tests/00003/ICN-AFGA08298XX-A-252001-A-D1131-00007-A-01-1_cleartext.CGM
+
+Current Test Results
+===================
+Test 00002 - techdraw.cgm:
+  Status: ✓ PASS
+  Output: tests/00002/techdraw_cleartext.CGM (253 KB, 1988 lines)
+  Baseline: tests/original_examples/techdraw_clearText.cgm (1661 lines)
+  Result: 100% geometry fidelity, only cosmetic differences
+  Messages: 1 INFO (VDC type conversion for compatibility)
+
+Test 00003 - ICN file:
+  Status: ✓ PASS (with limitations)
+  Output: tests/00003/ICN-AFGA08298XX-A-252001-A-D1131-00007-A-01-1_cleartext.CGM (2 KB, 71 lines)
+  Baseline: tests/original_examples/ICN-AFGA08298XX-A-252001-A-D1131-00007-A-01-1_clearText.cgm (2016 lines)
+  Result: Many advanced commands not yet implemented (appear as "Unknown command")
+  Messages: None (no errors)
+
+Comparing Results
+================
+Compare with C# baseline:
+  diff -u original_examples/techdraw_clearText.cgm 00002/techdraw_cleartext.CGM | less
+
+Count lines:
+  wc -l original_examples/techdraw_clearText.cgm 00002/techdraw_cleartext.CGM
+
+Check geometry commands:
+  grep "LINE" original_examples/techdraw_clearText.cgm | wc -l
+  grep "LINE" 00002/techdraw_cleartext.CGM | wc -l

@@ -12,7 +12,10 @@ from commands_extended import (
     ColourSelectionMode, VdcExtent, VdcType, IntegerPrecision,
     IndexPrecision, ColourPrecision, ColourIndexPrecision, RealPrecision,
     VdcIntegerPrecision, VdcRealPrecision, Polyline, Text, PolygonElement,
-    LineColour, TextColour, FillColour, BackgroundColour, CharacterHeight
+    LineColour, TextColour, FillColour, BackgroundColour, CharacterHeight,
+    LineWidth, LineType, DisjointPolyline, FontList, CharacterCodingAnnouncer,
+    MetafileDefaultsReplacement, ScalingMode, LineWidthSpecificationMode,
+    CharacterOrientation, TextFontIndex
 )
 
 
@@ -79,12 +82,16 @@ class CommandFactory:
         commands = {
             1: lambda: MetafileVersion(container),
             2: lambda: MetafileDescription(container),
+            3: lambda: VdcType(container),
             4: lambda: IntegerPrecision(container),
             5: lambda: RealPrecision(container),
             6: lambda: IndexPrecision(container),
             7: lambda: ColourPrecision(container),
             8: lambda: ColourIndexPrecision(container),
             11: lambda: MetafileElementList(container),
+            12: lambda: MetafileDefaultsReplacement(container),
+            13: lambda: FontList(container),
+            15: lambda: CharacterCodingAnnouncer(container),
             # Add more metafile descriptor elements as needed
         }
         
@@ -96,13 +103,12 @@ class CommandFactory:
     def _create_picture_descriptor(self, element_id: int, container):
         """Create picture descriptor commands"""
         commands = {
-            1: lambda: VdcIntegerPrecision(container),
+            1: lambda: ScalingMode(container),
             2: lambda: ColourSelectionMode(container),
-            3: lambda: VdcType(container),
+            3: lambda: LineWidthSpecificationMode(container),
             6: lambda: VdcExtent(container),
             7: lambda: BackgroundColour(container),
-            # VDC REAL PRECISION is element 2 but conflicts with ColorSelectionMode
-            # Need to check specification for correct mapping
+            # Add more picture descriptor elements as needed
         }
         
         creator = commands.get(element_id)
@@ -112,17 +118,24 @@ class CommandFactory:
     
     def _create_control_element(self, element_id: int, container):
         """Create control element commands"""
-        # Most control elements not yet implemented
+        commands = {
+            1: lambda: VdcIntegerPrecision(container),
+            2: lambda: VdcRealPrecision(container),
+        }
+        
+        creator = commands.get(element_id)
+        if creator:
+            return creator()
         return UnknownCommand(element_id, 3, container)
     
     def _create_graphical_primitive(self, element_id: int, container):
         """Create graphical primitive commands"""
         commands = {
             1: lambda: Polyline(container),
+            2: lambda: DisjointPolyline(container),
             4: lambda: Text(container),
             7: lambda: PolygonElement(container),
             # Add more graphical primitives as needed:
-            # 2: DisjointPolyline
             # 3: Polymarker
             # 5: RestrictedText
             # 6: AppendText
@@ -149,24 +162,24 @@ class CommandFactory:
     def _create_attribute_element(self, element_id: int, container):
         """Create attribute element commands"""
         commands = {
+            2: lambda: LineType(container),
+            3: lambda: LineWidth(container),
             4: lambda: LineColour(container),
+            10: lambda: TextFontIndex(container),
             14: lambda: TextColour(container),
             15: lambda: CharacterHeight(container),
+            16: lambda: CharacterOrientation(container),
             23: lambda: FillColour(container),
             # Add more attribute elements as needed:
             # 1: LineBundleIndex
-            # 2: LineType
-            # 3: LineWidth
             # 5: MarkerBundleIndex
             # 6: MarkerType
             # 7: MarkerSize
             # 8: MarkerColour
             # 9: TextBundleIndex
-            # 10: TextFontIndex
             # 11: TextPrecision
             # 12: CharacterExpansionFactor
             # 13: CharacterSpacing
-            # 16: CharacterOrientation
             # 17: TextPath
             # 18: TextAlignment
             # 19: CharacterSetIndex

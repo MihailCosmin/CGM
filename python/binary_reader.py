@@ -8,7 +8,8 @@ from typing import Optional, List, Tuple
 from cgm_classes import CGMPoint, CGMColor, VC, ViewportPoint, StructuredDataRecord, Message
 from cgm_enums import (
     Precision, ColourModelType, ColourSelectionModeType, VDCType,
-    DeviceViewportSpecificationModeEnum, StructuredDataType, Severity
+    DeviceViewportSpecificationModeEnum, StructuredDataType, Severity,
+    SpecificationMode
 )
 
 
@@ -371,6 +372,27 @@ class BinaryReader:
     def read_point(self) -> CGMPoint:
         """Read a 2D point"""
         return CGMPoint(self.read_vdc(), self.read_vdc())
+    
+    def read_point_list(self) -> list:
+        """Read a list of points from remaining arguments"""
+        # Calculate number of points from argument size
+        point_size = 2 * (self.cgm.vdc_integer_precision // 8 
+                         if self.cgm.vdc_type == VDCType.INTEGER 
+                         else 8)  # Simplified, should check VDC precision
+        
+        n = self.argument_count // point_size if point_size > 0 else 0
+        
+        points = []
+        for _ in range(n):
+            points.append(self.read_point())
+        return points
+    
+    def read_size_specification(self, spec_mode: SpecificationMode) -> float:
+        """Read size specification based on specification mode"""
+        if spec_mode == SpecificationMode.ABS:
+            return self.read_vdc()
+        else:
+            return self.read_real()
     
     def read_color_index(self, local_color_precision: int = -1) -> int:
         """Read color index"""
