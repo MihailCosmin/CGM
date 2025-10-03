@@ -12,3 +12,5 @@
 # with any Python 3.12+ version.
 
 # No external packages required
+reportlab
+svglib
