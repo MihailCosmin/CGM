@@ -348,15 +348,8 @@ class PolygonElement(Command):
     
     def read_from_binary(self, reader):
         """Read from binary format"""
-        point_size = 2 * (self.container.vdc_integer_precision // 8 
-                         if self.container.vdc_type == VDCType.INTEGER 
-                         else 8)
-        
-        n = reader.argument_count // point_size if point_size > 0 else 0
-        
-        self.points = []
-        for _ in range(n):
-            self.points.append(reader.read_point())
+        # Use read_point_list() which properly handles VDC precision
+        self.points = reader.read_point_list()
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
@@ -639,7 +632,7 @@ class CharacterOrientation(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"  charori {self.write_vdc(self.x_up)},{self.write_vdc(self.y_up)} {self.write_vdc(self.x_base)},{self.write_vdc(self.y_base)};")
+        writer.write_line(f"  CHARORI {self.write_vdc(self.x_up)} {self.write_vdc(self.y_up)}, {self.write_vdc(self.x_base)} {self.write_vdc(self.y_base)};")
 
 
 class TextFontIndex(Command):
@@ -655,7 +648,7 @@ class TextFontIndex(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"  textfontindex {self.index};")
+        writer.write_line(f" TEXTFONTINDEX {self.index};")
 
 
 

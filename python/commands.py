@@ -167,6 +167,7 @@ class EndMetafile(Command):
     def write_as_clear_text(self, writer):
         """Write as clear text"""
         writer.write_line("ENDMF;")
+        writer.write_line("")
 
 
 class BeginPicture(Command):
@@ -218,7 +219,7 @@ class EndPicture(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line("ENDPIC;")
+        writer.write_line(" ENDPIC;")
 
 
 class NoOp(Command):
@@ -372,13 +373,12 @@ class EllipticalArc(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write("  elliparc")
-        writer.write(f" {self.center.x:.4f} {self.center.y:.4f}")
-        writer.write(f" {self.first_conjugate_diameter_endpoint.x:.4f} {self.first_conjugate_diameter_endpoint.y:.4f}")
-        writer.write(f" {self.second_conjugate_diameter_endpoint.x:.4f} {self.second_conjugate_diameter_endpoint.y:.4f}")
-        writer.write(f" {self.start_vector_x:.4f} {self.start_vector_y:.4f}")
-        writer.write(f" {self.end_vector_x:.4f} {self.end_vector_y:.4f}")
-        writer.write_line(";")
+        writer.write("  ELLIPARC")
+        writer.write(f" ({self.center.x:.4f},{self.center.y:.4f})")
+        writer.write(f" ({self.first_conjugate_diameter_endpoint.x:.4f},{self.first_conjugate_diameter_endpoint.y:.4f})")
+        writer.write(f" ({self.second_conjugate_diameter_endpoint.x:.4f},{self.second_conjugate_diameter_endpoint.y:.4f})")
+        writer.write(f" ({self.start_vector_x:.4f},{self.start_vector_y:.4f})")
+        writer.write_line(f" ({self.end_vector_x:.4f},{self.end_vector_y:.4f});")
 
 
 class EllipseElement(Command):
@@ -398,10 +398,10 @@ class EllipseElement(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write("  ellipse")
-        writer.write(f" {self.center.x:.4f} {self.center.y:.4f}")
-        writer.write(f" {self.first_conjugate_diameter_endpoint.x:.4f} {self.first_conjugate_diameter_endpoint.y:.4f}")
-        writer.write(f" {self.second_conjugate_diameter_endpoint.x:.4f} {self.second_conjugate_diameter_endpoint.y:.4f}")
+        writer.write("  ELLIPSE")
+        writer.write(f" ({self.center.x:.4f},{self.center.y:.4f})")
+        writer.write(f" ({self.first_conjugate_diameter_endpoint.x:.4f},{self.first_conjugate_diameter_endpoint.y:.4f})")
+        writer.write(f" ({self.second_conjugate_diameter_endpoint.x:.4f},{self.second_conjugate_diameter_endpoint.y:.4f})")
         writer.write_line(";")
 
 
@@ -420,8 +420,8 @@ class CircleElement(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write("  circle")
-        writer.write(f" {self.center.x:.4f} {self.center.y:.4f}")
+        writer.write("  CIRCLE")
+        writer.write(f" ({self.center.x:.4f},{self.center.y:.4f})")
         writer.write(f" {self.radius:.4f}")
         writer.write_line(";")
 
@@ -434,6 +434,7 @@ class RestrictedText(Command):
         self.delta_width = 0.0
         self.delta_height = 0.0
         self.position = None
+        self.final = True  # Final/NotFinal flag
         self.string = ""
     
     def read_from_binary(self, reader):
@@ -441,13 +442,15 @@ class RestrictedText(Command):
         self.delta_width = reader.read_vdc()
         self.delta_height = reader.read_vdc()
         self.position = reader.read_point()
+        self.final = reader.read_bool()  # Read final flag
         self.string = reader.read_string()
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write("  restrtext")
+        writer.write("  RESTRTEXT")
         writer.write(f" {self.delta_width:.4f} {self.delta_height:.4f}")
-        writer.write(f" {self.position.x:.4f} {self.position.y:.4f}")
+        writer.write(f"  ({self.position.x:.4f},{self.position.y:.4f})")
+        writer.write(" final" if self.final else " notfinal")
         writer.write(f" '{self.string}'")
         writer.write_line(";")
 
@@ -537,7 +540,41 @@ class EdgeWidth(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"  edgewidth {self.width:.4f};")
+        writer.write_line(f"  EDGEWIDTH {self.width:.4f};")
+
+
+class EdgeCap(Command):
+    """Edge Cap command (Class=5, ID=44)"""
+    
+    def __init__(self, container):
+        super().__init__(5, 44, container)
+        self.line_indicator = 1  # 1=unspecified, 2=butt, 3=round, 4=projecting square, 5=triangle
+        self.dash_indicator = 1  # 1=unspecified, 2=butt, 3=match
+    
+    def read_from_binary(self, reader):
+        """Read from binary format"""
+        self.line_indicator = reader.read_index()
+        self.dash_indicator = reader.read_index()
+    
+    def write_as_clear_text(self, writer):
+        """Write as clear text"""
+        writer.write_line(f" EDGECAP {self.line_indicator} {self.dash_indicator};")
+
+
+class EdgeJoin(Command):
+    """Edge Join command (Class=5, ID=45)"""
+    
+    def __init__(self, container):
+        super().__init__(5, 45, container)
+        self.join_type = 1  # 1=unspecified, 2=mitre, 3=round, 4=bevel
+    
+    def read_from_binary(self, reader):
+        """Read from binary format"""
+        self.join_type = reader.read_index()
+    
+    def write_as_clear_text(self, writer):
+        """Write as clear text"""
+        writer.write_line(f" EDGEJOIN {self.join_type};")
 
 
 class EdgeColour(Command):
@@ -549,14 +586,18 @@ class EdgeColour(Command):
     
     def read_from_binary(self, reader):
         """Read from binary format"""
-        self.colour = reader.read_colour()
+        self.colour = reader.read_color()
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        if hasattr(self.colour, 'index'):
-            writer.write_line(f"  edgecolr {self.colour.index};")
+        # Check if it's indexed color (most common case)
+        if hasattr(self.colour, 'is_indexed') and self.colour.is_indexed:
+            writer.write_line(f"  EDGECOLR {self.colour.color_index};")
+        elif hasattr(self.colour, 'r'):
+            # Direct RGB color
+            writer.write_line(f"  EDGECOLR {self.colour.r} {self.colour.g} {self.colour.b};")
         else:
-            writer.write_line(f"  edgecolr {self.colour};")
+            writer.write_line(f"  EDGECOLR {self.colour};")
 
 
 class EdgeType(Command):
@@ -1122,12 +1163,28 @@ class TextAlignment(Command):
     
     def __init__(self, container):
         super().__init__(5, 18, container)
+        self.horizontal_alignment = 0  # 0=normhoriz, 1=left, 2=ctr, 3=right, 4=conthoriz
+        self.vertical_alignment = 0    # 0=normvert, 1=top, 2=cap, 3=half, 4=base, 5=bottom, 6=contvert
+        self.continuous_horizontal = 0.0
+        self.continuous_vertical = 0.0
         
     def read_from_binary(self, reader):
-        pass
+        """Read from binary format"""
+        self.horizontal_alignment = reader.read_enum()
+        self.vertical_alignment = reader.read_enum()
+        self.continuous_horizontal = reader.read_real()
+        self.continuous_vertical = reader.read_real()
         
     def write_as_clear_text(self, writer):
-        writer.write_line("  textalign normhoriz normvert 0.0 0.0;")
+        """Write as clear text"""
+        # Map enum values to strings
+        h_align_names = ['normhoriz', 'left', 'ctr', 'right', 'conthoriz']
+        v_align_names = ['normvert', 'top', 'cap', 'half', 'base', 'bottom', 'contvert']
+        
+        h_name = h_align_names[self.horizontal_alignment] if self.horizontal_alignment < len(h_align_names) else 'normhoriz'
+        v_name = v_align_names[self.vertical_alignment] if self.vertical_alignment < len(v_align_names) else 'normvert'
+        
+        writer.write_line(f"  textalign {h_name}, {v_name}, {self.continuous_horizontal:.4f}, {self.continuous_vertical:.4f};")
 
 class CharacterSetIndex(Command):
     """Character Set Index command (Class=5, ID=19)"""

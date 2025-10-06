@@ -8,7 +8,8 @@ from commands import (
     BeginPictureBody, EndPicture, MetafileVersion, MetafileDescription,
     MetafileElementList, CircularArcCentre, EllipticalArc, EllipseElement,
     CircleElement, RestrictedText, EdgeVisibility, InteriorStyle, LineCap,
-    LineJoin, EdgeWidth, EdgeColour, EdgeType, BeginFigure, EndFigure,
+    LineJoin, EdgeWidth, EdgeCap, EdgeJoin, EdgeColour, EdgeType, 
+    BeginFigure, EndFigure,
     BeginApplicationStructure, BeginApplicationStructureBody,
     EndApplicationStructure, MessageCommand, ApplicationStructureAttribute,
     FontProperties, Transparency, ClipIndicator, CharacterSetList,
@@ -198,8 +199,8 @@ class CommandFactory:
             37: lambda: LineCap(container),
             38: lambda: LineJoin(container),
             42: lambda: RestrictedTextType(container),
-            44: lambda: InterpolatedInterior(container),
-            45: lambda: HatchStyleDefinition(container),
+            44: lambda: EdgeCap(container),
+            45: lambda: EdgeJoin(container),
             46: lambda: GeometricPatternDefinition(container),
         }
         
