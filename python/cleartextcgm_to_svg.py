@@ -722,9 +722,76 @@ class CGMToSVGConverter:
 
     def _parse_elliptical_arc(self, line: str):
         """Parse ELLIPARC command (Elliptical Arc)"""
-        # For now, treat as circle arc (simplified implementation)
-        # A full implementation would handle elliptical parameters
-        self._parse_arc_center(line)
+        # ELLIPARC format: ELLIPARC (cx,cy) (cdp1x,cdp1y) (cdp2x,cdp2y) (dx1,dy1) (dx2,dy2)
+        # where cdp1, cdp2 are conjugate diameter endpoints defining the ellipse
+        # and (dx1,dy1), (dx2,dy2) are vectors from center to start/end of arc
+        
+        points = self._extract_points(line)
+        if len(points) >= 5:
+            center = points[0]
+            cdp1 = points[1]  # Conjugate diameter point 1
+            cdp2 = points[2]  # Conjugate diameter point 2
+            start_vec = points[3]  # Start point vector (dx1, dy1)
+            end_vec = points[4]  # End point vector (dx2, dy2)
+            
+            import math
+            
+            # Calculate conjugate diameter vectors from center
+            cdp1_vec_x = cdp1.x - center.x
+            cdp1_vec_y = cdp1.y - center.y
+            cdp2_vec_x = cdp2.x - center.x
+            cdp2_vec_y = cdp2.y - center.y
+            
+            # For conjugate diameters, calculate the semi-axes
+            # The semi-axes are the magnitudes of the conjugate diameter vectors
+            # divided by sqrt(2) (for a general ellipse)
+            # But in CGM, the CDP points already represent the semi-axes
+            rx = math.sqrt(cdp1_vec_x**2 + cdp1_vec_y**2)
+            ry = math.sqrt(cdp2_vec_x**2 + cdp2_vec_y**2)
+            
+            # Calculate rotation angle from the first conjugate diameter
+            rotation_angle = math.degrees(math.atan2(cdp1_vec_y, cdp1_vec_x))
+            
+            # When Y-axis is flipped, negate the rotation angle
+            svg_rotation_angle = -rotation_angle
+            
+            # Transform to SVG coordinates
+            scale = self._get_scale()
+            svg_rx = rx * scale
+            svg_ry = ry * scale
+            
+            # Calculate start and end points
+            start_x = center.x + start_vec.x
+            start_y = center.y + start_vec.y
+            end_x = center.x + end_vec.x
+            end_y = center.y + end_vec.y
+            
+            svg_start = self._transform_point(Point(start_x, start_y))
+            svg_end = self._transform_point(Point(end_x, end_y))
+            
+            # Calculate angles for sweep direction
+            start_angle = math.atan2(start_vec.y, start_vec.x)
+            end_angle = math.atan2(end_vec.y, end_vec.x)
+            
+            angle_diff = end_angle - start_angle
+            while angle_diff < 0:
+                angle_diff += 2 * math.pi
+            while angle_diff > 2 * math.pi:
+                angle_diff -= 2 * math.pi
+            
+            # Determine flags
+            large_arc = 1 if angle_diff > math.pi else 0
+            sweep = 0 if angle_diff > 0 else 1
+            
+            # Create SVG elliptical arc with rotation
+            style = self._get_line_style()
+            path_data = (f"M {svg_start.x:.2f},{svg_start.y:.2f} "
+                        f"A {svg_rx:.2f},{svg_ry:.2f} {svg_rotation_angle:.2f} "
+                        f"{large_arc},{sweep} {svg_end.x:.2f},{svg_end.y:.2f}")
+            
+            arc_element = f'<path d="{path_data}" {style} fill="none"/>'
+            self.elements.append(arc_element)
+
 
     def _parse_restricted_text(self, line: str):
         """Parse RESTRTEXT command (Restricted Text)"""
