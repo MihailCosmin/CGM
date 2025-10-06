@@ -62,9 +62,10 @@ class Point:
 @dataclass
 class Color:
     """RGB Color"""
-    r: int
-    g: int
-    b: int
+    def __init__(self, r: int = 0, g: int = 0, b: int = 0):
+        self.r = r
+        self.g = g
+        self.b = b
     
     def to_hex(self) -> str:
         """Convert to hex color string"""
@@ -116,6 +117,8 @@ class GraphicsState:
         self.character_height: float = 12.0
         self.background_color: Color = Color(255, 255, 255)  # White
         self.edge_visible: bool = True
+        self.edge_width: float = 1.0  # Edge width for closed shapes
+        self.edge_color: Color = Color(0, 0, 0)  # Black
         self.interior_style: str = "hollow"  # hollow, solid, pattern, hatch, empty
         # Character orientation: (up_x, up_y), (base_x, base_y)
         self.char_orientation: tuple = ((0.0, 1.0), (1.0, 0.0))
@@ -373,7 +376,7 @@ class CGMToSVGConverter:
             self._parse_edge_color(line)
         elif line.startswith('EDGEWIDTH'):
             self._parse_edge_width(line)
-        elif line.startswith('INTSTYLE'):
+        elif line.startswith('intstyle'):
             self._parse_interior_style(line)
         # Ignore setup commands that don't affect rendering directly
         elif line.startswith(('MFVERSION', 'MFDESC', 'MFELEMLIST', 'fontlist', 
@@ -607,13 +610,14 @@ class CGMToSVGConverter:
             scale = self._get_scale()
             svg_radius = radius * scale
             
-            style = self._get_line_style()
+            # Use edge style for circles (not line style)
+            style = self._get_edge_style()
             # Check interior style for fill
-            if self.state.interior_style in ["hollow", "empty"]:
-                style += ' fill="none"'
-            elif self.state.fill_color:
+            if self.state.interior_style == "solid":
+                # Solid fill - use fill color
                 style += f' fill="{self.state.fill_color.to_hex()}"'
             else:
+                # Hollow, empty, or other - no fill
                 style += ' fill="none"'
             
             circle = (
@@ -639,13 +643,14 @@ class CGMToSVGConverter:
             svg_rx = self._transform_length(rx)
             svg_ry = self._transform_length(ry)
             
-            style = self._get_line_style()
+            # Use edge style for ellipses (not line style)
+            style = self._get_edge_style()
             # Check interior style for fill
-            if self.state.interior_style in ["hollow", "empty"]:
-                style += ' fill="none"'
-            elif self.state.fill_color:
+            if self.state.interior_style == "solid":
+                # Solid fill - use fill color
                 style += f' fill="{self.state.fill_color.to_hex()}"'
             else:
+                # Hollow, empty, or other - no fill
                 style += ' fill="none"'
             
             ellipse = f'<ellipse cx="{svg_center.x:.2f}" cy="{svg_center.y:.2f}" ' \
@@ -654,57 +659,66 @@ class CGMToSVGConverter:
 
     def _parse_arc_center(self, line: str):
         """Parse ARCCTR command (Arc Center)"""
-        # Flush pending lines before drawing arcs
-        self._flush_pending_lines()
-        
         # Extract coordinates: ARCCTR cx cy dx1 dy1 dx2 dy2 radius
         coords = re.findall(r'([-+]?[\d.]+)', line)
         if len(coords) >= 7:
             cx, cy, dx1, dy1, dx2, dy2, radius = map(float, coords[:7])
-            center = Point(cx, cy)
-            svg_center = self._transform_point(center)
-            svg_radius = self._transform_length(radius)
+            
+            # Transform radius with scale
+            scale = self._get_scale()
+            svg_radius = radius * scale
             
             # Skip very small arcs (likely rendering artifacts)
             if svg_radius < 0.1:
                 return
             
-            # Calculate start and end angles
+            # Calculate start and end points in CGM coordinates
             import math
-            start_angle = math.degrees(math.atan2(dy1, dx1))
-            end_angle = math.degrees(math.atan2(dy2, dx2))
             
-            # Calculate angle difference
+            # Start point: center + (dx1, dy1)
+            start_x = cx + dx1
+            start_y = cy + dy1
+            
+            # End point: center + (dx2, dy2)
+            end_x = cx + dx2
+            end_y = cy + dy2
+            
+            # Transform points to SVG coordinates
+            svg_start = self._transform_point(Point(start_x, start_y))
+            svg_end = self._transform_point(Point(end_x, end_y))
+            
+            # Calculate angles in CGM coordinate system (before Y-flip)
+            start_angle = math.atan2(dy1, dx1)
+            end_angle = math.atan2(dy2, dx2)
+            
+            # Calculate angle difference (counter-clockwise is positive in CGM)
             angle_diff = end_angle - start_angle
-            if angle_diff < 0:
-                angle_diff += 360
             
-            # Skip very small arc segments (less than 0.5 degrees)
-            if angle_diff < 0.5:
-                return
+            # Normalize to [0, 2π]
+            while angle_diff < 0:
+                angle_diff += 2 * math.pi
+            while angle_diff > 2 * math.pi:
+                angle_diff -= 2 * math.pi
             
-            # Approximate arc as polyline with multiple points
-            # Number of segments based on angle and radius
-            # More segments for larger angles and larger radii
-            num_segments = max(2, min(int(angle_diff / 2.0), 20))
+            # Determine if this is a large arc (> 180 degrees)
+            large_arc = 1 if angle_diff > math.pi else 0
             
-            # Generate points along the arc
-            points = []
-            for i in range(num_segments + 1):
-                t = i / num_segments
-                angle = start_angle + t * angle_diff
-                x = (svg_center.x +
-                     svg_radius * math.cos(math.radians(angle)))
-                y = (svg_center.y +
-                     svg_radius * math.sin(math.radians(angle)))
-                points.append(f'{x:.2f},{y:.2f}')
+            # Sweep direction: CGM has Y-up, SVG has Y-down (flipped).
+            # In CGM: counter-clockwise is positive angle (mathematical convention)
+            # In SVG: clockwise is positive (screen coordinates, Y-down)
+            # When we flip Y: CGM counter-clockwise → SVG counter-clockwise
+            # So use sweep=0 for positive CGM angles (counter-clockwise in both)
+            sweep = 0 if angle_diff > 0 else 1
             
-            # Create polyline element
-            points_str = ' '.join(points)
+            # Create SVG arc using path with A command
+            # A rx ry x-axis-rotation large-arc-flag sweep-flag x y
             style = self._get_line_style()
-            line_element = (f'<polyline points="{points_str}" '
-                            f'{style} fill="none"/>')
-            self.elements.append(line_element)
+            path_data = (f"M {svg_start.x:.2f},{svg_start.y:.2f} "
+                        f"A {svg_radius:.2f},{svg_radius:.2f} 0 "
+                        f"{large_arc},{sweep} {svg_end.x:.2f},{svg_end.y:.2f}")
+            
+            arc_element = f'<path d="{path_data}" {style} fill="none"/>'
+            self.elements.append(arc_element)
 
     def _parse_elliptical_arc(self, line: str):
         """Parse ELLIPARC command (Elliptical Arc)"""
@@ -805,13 +819,20 @@ class CGMToSVGConverter:
 
     def _parse_edge_color(self, line: str):
         """Parse EDGECOLR command"""
-        # Edge color - for now just ignore
-        pass
+        coords = re.findall(r'([\d.]+)', line)
+        if len(coords) >= 3:
+            r, g, b = map(int, coords[:3])
+            self.state.edge_color = Color(r, g, b)
+        elif len(coords) >= 1:
+            # Single value - use color index
+            index = int(coords[0])
+            self.state.edge_color = Color.from_index(index)
 
     def _parse_edge_width(self, line: str):
         """Parse EDGEWIDTH command"""
-        # Edge width - for now just ignore
-        pass
+        coords = re.findall(r'([\d.]+)', line)
+        if coords:
+            self.state.edge_width = float(coords[0])
 
     def _parse_interior_style(self, line: str):
         """Parse INTSTYLE command"""
@@ -820,10 +841,8 @@ class CGMToSVGConverter:
         if len(parts) >= 2:
             style = parts[1].lower()
             self.state.interior_style = style
-            # Update fill based on style
-            if style == "empty" or style == "hollow":
-                self.state.fill_color = Color(255, 255, 255)  # Transparent/white
-            # solid and other styles keep current fill color
+            # Note: fill_color is set separately by FILLCOLR command
+            # interior_style just controls whether to use it
 
     def _parse_max_vdc_extent(self, line: str):
         """Parse MAXVDCEXT command to set maximum coordinate system"""
@@ -908,6 +927,12 @@ class CGMToSVGConverter:
             transformed_width = max(0.5, transformed_width * 0.01)  # Scale to 1%
         
         return transformed_width
+    
+    def _get_edge_style(self) -> str:
+        """Generate SVG style for edges (circles, ellipses, etc)"""
+        width = self._transform_length(self.state.edge_width)
+        color = self.state.edge_color.to_hex()
+        return f'stroke="{color}" stroke-width="{width:.2f}"'
     
     def _get_line_style(self) -> str:
         """Generate SVG style string for current line attributes"""
