@@ -115,6 +115,8 @@ class GraphicsState:
         self.text_font_index: int = 1
         self.character_height: float = 12.0
         self.background_color: Color = Color(255, 255, 255)  # White
+        self.edge_visible: bool = True
+        self.interior_style: str = "hollow"  # hollow, solid, pattern, hatch, empty
 
 
 class CGMToSVGConverter:
@@ -330,6 +332,8 @@ class CGMToSVGConverter:
             self._parse_character_height(line)
         elif line.startswith('CIRCLE'):
             self._parse_circle(line)
+        elif line.startswith('ELLIPSE'):
+            self._parse_ellipse(line)
         elif line.startswith('ARCCTR'):
             self._parse_arc_center(line)
         elif line.startswith('ELLIPARC'):
@@ -487,8 +491,20 @@ class CGMToSVGConverter:
             font_family = self.font_families.get(
                 self.state.text_font_index, "Arial, sans-serif")
             
-            # Calculate font size (approximate conversion from CGM height)
-            font_size = self._transform_length(self.state.character_height)
+            # Calculate font size - character height is in VDC units
+            # For technical drawings, ensure text is readable
+            # We use the character height as a percentage of VDC height,
+            # but ensure minimum readability
+            cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
+            if cgm_height > 0:
+                # Calculate what proportion of the drawing height this text is
+                height_proportion = self.state.character_height / cgm_height
+                # Apply to SVG height (400px default)
+                font_size = height_proportion * 400.0
+                # Ensure minimum readable size (12px) and reasonable maximum
+                font_size = max(12.0, min(font_size, 48.0))
+            else:
+                font_size = 12  # fallback
             
             text_style = (f'fill="{self.state.text_color.to_hex()}" '
                           f'font-family="{font_family}" '
@@ -513,7 +529,12 @@ class CGMToSVGConverter:
         points_str = ' '.join(str(p) for p in svg_points)
         
         line_style = self._get_line_style()
-        fill_style = f'fill="{self.state.fill_color.to_hex()}"'
+        
+        # Check interior style for fill
+        if self.state.interior_style in ["hollow", "empty"]:
+            fill_style = 'fill="none"'
+        else:
+            fill_style = f'fill="{self.state.fill_color.to_hex()}"'
         
         polygon_element = (f'<polygon points="{points_str}" '
                            f'{line_style} {fill_style}/>')
@@ -576,7 +597,10 @@ class CGMToSVGConverter:
             svg_radius = self._transform_length(radius)
             
             style = self._get_line_style()
-            if self.state.fill_color:
+            # Check interior style for fill
+            if self.state.interior_style in ["hollow", "empty"]:
+                style += ' fill="none"'
+            elif self.state.fill_color:
                 style += f' fill="{self.state.fill_color.to_hex()}"'
             else:
                 style += ' fill="none"'
@@ -584,6 +608,36 @@ class CGMToSVGConverter:
             circle = f'<circle cx="{svg_center.x:.2f}" cy="{svg_center.y:.2f}" ' \
                     f'r="{svg_radius:.2f}" {style}/>'
             self.elements.append(circle)
+
+    def _parse_ellipse(self, line: str):
+        """Parse ELLIPSE command: ELLIPSE (cx,cy) (cdp1x,cdp1y) (cdp2x,cdp2y)"""
+        # Extract coordinate points
+        points = self._extract_points(line)
+        if len(points) >= 3:
+            center = points[0]
+            cdp1 = points[1]  # Conjugate diameter point 1
+            cdp2 = points[2]  # Conjugate diameter point 2
+            
+            # Calculate semi-major and semi-minor axes from conjugate diameter points
+            rx = abs(cdp1.x - center.x)
+            ry = abs(cdp2.y - center.y)
+            
+            svg_center = self._transform_point(center)
+            svg_rx = self._transform_length(rx)
+            svg_ry = self._transform_length(ry)
+            
+            style = self._get_line_style()
+            # Check interior style for fill
+            if self.state.interior_style in ["hollow", "empty"]:
+                style += ' fill="none"'
+            elif self.state.fill_color:
+                style += f' fill="{self.state.fill_color.to_hex()}"'
+            else:
+                style += ' fill="none"'
+            
+            ellipse = f'<ellipse cx="{svg_center.x:.2f}" cy="{svg_center.y:.2f}" ' \
+                     f'rx="{svg_rx:.2f}" ry="{svg_ry:.2f}" {style}/>'
+            self.elements.append(ellipse)
 
     def _parse_arc_center(self, line: str):
         """Parse ARCCTR command (Arc Center)"""
@@ -647,18 +701,27 @@ class CGMToSVGConverter:
 
     def _parse_restricted_text(self, line: str):
         """Parse RESTRTEXT command (Restricted Text)"""
-        # Extract: RESTRTEXT x y width height 'text'
+        # Extract: RESTRTEXT width height (x,y) final 'text'
         coords = re.findall(r'([-+]?[\d.]+)', line)
         text_match = re.search(r"'([^']*)'", line)
         
         if len(coords) >= 4 and text_match:
-            x, y, width, height = map(float, coords[:4])
+            # Correct order: width, height, x, y
+            width, height, x, y = map(float, coords[:4])
             text = text_match.group(1)
             
             if text:  # Only render non-empty text
                 position = Point(x, y)
                 svg_pos = self._transform_point(position)
-                svg_height = self._transform_length(self.state.character_height)
+                
+                # Calculate font size with minimum readability
+                cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
+                if cgm_height > 0:
+                    height_proportion = self.state.character_height / cgm_height
+                    svg_height = height_proportion * 400.0
+                    svg_height = max(12.0, min(svg_height, 48.0))
+                else:
+                    svg_height = 12
                 
                 color = self.state.text_color.to_hex()
                 
@@ -713,8 +776,15 @@ class CGMToSVGConverter:
 
     def _parse_interior_style(self, line: str):
         """Parse INTSTYLE command"""
-        # Interior style - for now just ignore
-        pass
+        # INTSTYLE hollow|solid|pattern|hatch|empty
+        parts = line.split()
+        if len(parts) >= 2:
+            style = parts[1].lower()
+            self.state.interior_style = style
+            # Update fill based on style
+            if style == "empty" or style == "hollow":
+                self.state.fill_color = Color(255, 255, 255)  # Transparent/white
+            # solid and other styles keep current fill color
 
     def _parse_max_vdc_extent(self, line: str):
         """Parse MAXVDCEXT command to set maximum coordinate system"""
