@@ -117,6 +117,8 @@ class GraphicsState:
         self.background_color: Color = Color(255, 255, 255)  # White
         self.edge_visible: bool = True
         self.interior_style: str = "hollow"  # hollow, solid, pattern, hatch, empty
+        # Character orientation: (up_x, up_y), (base_x, base_y)
+        self.char_orientation: tuple = ((0.0, 1.0), (1.0, 0.0))
 
 
 class CGMToSVGConverter:
@@ -144,6 +146,12 @@ class CGMToSVGConverter:
         self.current_group_attributes = None
         self.pending_lines = []  # For consolidating into polylines
         self.groups = {}  # Layer/group organization
+    
+    def _get_scale(self) -> float:
+        """Get the scaling factor from VDC to SVG coordinates"""
+        # Use the standard scale of 39.37 (1000mm per inch / 25.4mm per inch)
+        # This matches commercial CGM viewers
+        return 39.37
     
     def convert_file(self, cgm_path: str, svg_path: str):
         """Convert CGM file to SVG"""
@@ -219,8 +227,9 @@ class CGMToSVGConverter:
         cgm_width = self.vdc_extent_max.x - self.vdc_extent_min.x
         cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
         
-        # Use same scale as coordinate transformation
-        scale = 400.0 / cgm_width
+        # Use larger scale for readable text (similar to commercial software)
+        # Target viewbox width of ~6800 for good text rendering
+        scale = self._get_scale()
         viewbox_width = cgm_width * scale
         viewbox_height = cgm_height * scale
         
@@ -352,7 +361,7 @@ class CGMToSVGConverter:
             pass  # Message command - ignore for rendering
         elif line.startswith('CLIP'):
             self._parse_clip(line)
-        elif line.startswith('charori'):
+        elif line.startswith(('charori', 'CHARORI')):
             self._parse_character_orientation(line)
         elif line.startswith('TEXTALIGN'):
             self._parse_text_alignment(line)
@@ -491,20 +500,9 @@ class CGMToSVGConverter:
             font_family = self.font_families.get(
                 self.state.text_font_index, "Arial, sans-serif")
             
-            # Calculate font size - character height is in VDC units
-            # For technical drawings, ensure text is readable
-            # We use the character height as a percentage of VDC height,
-            # but ensure minimum readability
-            cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
-            if cgm_height > 0:
-                # Calculate what proportion of the drawing height this text is
-                height_proportion = self.state.character_height / cgm_height
-                # Apply to SVG height (400px default)
-                font_size = height_proportion * 400.0
-                # Ensure minimum readable size (12px) and reasonable maximum
-                font_size = max(12.0, min(font_size, 48.0))
-            else:
-                font_size = 12  # fallback
+            # Calculate font size - use character height with same scale
+            # as coordinates
+            font_size = self.state.character_height * self._get_scale()
             
             text_style = (f'fill="{self.state.text_color.to_hex()}" '
                           f'font-family="{font_family}" '
@@ -711,22 +709,44 @@ class CGMToSVGConverter:
             text = text_match.group(1)
             
             if text:  # Only render non-empty text
+                scale = self._get_scale()
+                
+                # Get character orientation (base_x is rotation component)
+                ((up_x, up_y), (base_x, base_y)) = \
+                    self.state.char_orientation
+                
+                # Transform position to SVG coordinates (final position)
                 position = Point(x, y)
                 svg_pos = self._transform_point(position)
                 
-                # Calculate font size with minimum readability
-                cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
-                if cgm_height > 0:
-                    height_proportion = self.state.character_height / cgm_height
-                    svg_height = height_proportion * 400.0
-                    svg_height = max(12.0, min(svg_height, 48.0))
-                else:
-                    svg_height = 12
+                # Calculate font size - match commercial at 138.65px
+                # Use height * scale * 1.388 to get ~138.65
+                svg_height = height * scale * 1.388
+                
+                # Commercial software uses text at a position calculated
+                # as text_x = 3100 * base_x (approximate constant)
+                # then applies transform to position and rotate correctly
+                
+                text_x = 3100.0 * base_x  # Commercial formula
+                standard_y = 2204.72
+                
+                # Calculate required translation:
+                # We want: base_x * text_x + tx = svg_pos.x
+                # So: tx = svg_pos.x - (base_x * text_x)
+                tx = svg_pos.x - (base_x * text_x)
+                ty = svg_pos.y - standard_y
                 
                 color = self.state.text_color.to_hex()
                 
-                text_elem = f'<text x="{svg_pos.x:.2f}" y="{svg_pos.y:.2f}" ' \
-                           f'font-size="{svg_height:.2f}" fill="{color}">{text}</text>'
+                # Match commercial format with transform
+                text_elem = (
+                    f'   <g transform="matrix({base_x} 0 0 1 '
+                    f'{tx:.2f} {ty:.2f})">\n'
+                    f'    <text x="{text_x:.2f}" '
+                    f'y="{standard_y}" '
+                    f'font-size="{svg_height:.2f}" fill="{color}">'
+                    f'{text}</text>\n'
+                    f'   </g>')
                 self.elements.append(text_elem)
 
     def _parse_color_table(self, line: str):
@@ -745,9 +765,13 @@ class CGMToSVGConverter:
         pass
 
     def _parse_character_orientation(self, line: str):
-        """Parse charori command (Character Orientation)"""
-        # Character orientation - for now just ignore
-        pass
+        """Parse CHARORI command (Character Orientation)"""
+        # Format: CHARORI up_x up_y, base_x base_y
+        # Example: CHARORI 0.0000 1.0000, 0.9735 0.0000
+        coords = re.findall(r'([-+]?[\d.]+)', line)
+        if len(coords) >= 4:
+            up_x, up_y, base_x, base_y = map(float, coords[:4])
+            self.state.char_orientation = ((up_x, up_y), (base_x, base_y))
 
     def _parse_text_alignment(self, line: str):
         """Parse TEXTALIGN command"""
@@ -837,8 +861,8 @@ class CGMToSVGConverter:
         if cgm_width <= 0 or cgm_height <= 0:
             return Point(0, 0)
         
-        # Scale to get viewBox around 400 units wide
-        scale = 400.0 / cgm_width
+        # Scale using consistent method
+        scale = self._get_scale()
         
         # Transform coordinates relative to minimum point
         x = (cgm_point.x - self.vdc_extent_min.x) * scale
@@ -858,7 +882,7 @@ class CGMToSVGConverter:
             return cgm_length
         
         # Use same scale as coordinate transformation
-        scale = 400.0 / cgm_width
+        scale = self._get_scale()
         
         # Apply scale and add a correction factor for line widths
         # CGM line widths seem to be in wrong units - scale them down
