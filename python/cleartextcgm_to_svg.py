@@ -418,24 +418,33 @@ class CGMToSVGConverter:
             self.vdc_extent_max = Point(x2, y2)
     
     def _parse_line(self, line: str):
-        """Parse LINE command - creates separate polylines for each segment"""
+        """Parse LINE command - line or polyline by point count"""
         points = self._extract_points(line)
         if len(points) < 2:
             return
         
         style = self._get_line_style()
         
-        # CGM LINE contains multiple disconnected segments (pairs of points)
-        # Create separate polylines for each segment (every 2 points)
-        for i in range(0, len(points) - 1, 2):
-            if i + 1 < len(points):
-                p1 = self._transform_point(points[i])
-                p2 = self._transform_point(points[i + 1])
-                points_str = f'{p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f}'
-                
-                polyline_element = (f'<polyline points="{points_str}" '
-                                    f'{style} fill="none"/>')
-                self.elements.append(polyline_element)
+        if len(points) == 2:
+            # Two points: use <line> element (matches commercial)
+            p1 = self._transform_point(points[0])
+            p2 = self._transform_point(points[1])
+            
+            line_element = (
+                f'<line x1="{p1.x:.2f}" y1="{p1.y:.2f}" '
+                f'x2="{p2.x:.2f}" y2="{p2.y:.2f}" '
+                f'{style} fill="none"/>')
+            self.elements.append(line_element)
+        else:
+            # Three or more points: use <polyline> with ALL points
+            svg_points = [self._transform_point(p) for p in points]
+            points_str = ' '.join([f'{p.x:.2f},{p.y:.2f}'
+                                  for p in svg_points])
+            
+            polyline_element = (
+                f'<polyline points="{points_str}" '
+                f'{style} fill="none"/>')
+            self.elements.append(polyline_element)
     
     def _flush_pending_lines(self):
         """Flush pending line segments as a consolidated polyline"""
@@ -592,7 +601,11 @@ class CGMToSVGConverter:
             cx, cy, radius = map(float, coords[:3])
             center = Point(cx, cy)
             svg_center = self._transform_point(center)
-            svg_radius = self._transform_length(radius)
+            
+            # Transform radius with scale (don't use _transform_length
+            # as it has line width correction that shouldn't apply)
+            scale = self._get_scale()
+            svg_radius = radius * scale
             
             style = self._get_line_style()
             # Check interior style for fill
@@ -603,8 +616,10 @@ class CGMToSVGConverter:
             else:
                 style += ' fill="none"'
             
-            circle = f'<circle cx="{svg_center.x:.2f}" cy="{svg_center.y:.2f}" ' \
-                    f'r="{svg_radius:.2f}" {style}/>'
+            circle = (
+                f'<circle cx="{svg_center.x:.2f}" '
+                f'cy="{svg_center.y:.2f}" '
+                f'r="{svg_radius:.2f}" {style}/>')
             self.elements.append(circle)
 
     def _parse_ellipse(self, line: str):
