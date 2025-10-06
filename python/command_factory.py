@@ -6,7 +6,18 @@ from cgm_enums import ClassCode
 from commands import (
     UnknownCommand, NoOp, BeginMetafile, EndMetafile, BeginPicture,
     BeginPictureBody, EndPicture, MetafileVersion, MetafileDescription,
-    MetafileElementList
+    MetafileElementList, CircularArcCentre, EllipticalArc, EllipseElement,
+    CircleElement, RestrictedText, EdgeVisibility, InteriorStyle, LineCap,
+    LineJoin, EdgeWidth, EdgeColour, EdgeType, BeginFigure, EndFigure,
+    BeginApplicationStructure, BeginApplicationStructureBody,
+    EndApplicationStructure, MessageCommand, ApplicationStructureAttribute,
+    FontProperties, Transparency, ClipIndicator, CharacterSetList,
+    MaximumColourIndex, ColourValueExtent, RestrictedTextType,
+    MarkerSizeSpecificationMode, EdgeWidthSpecificationMode,
+    LineAndEdgeTypeDefinition, LineTypeContinuation, Polybezier,
+    CharacterExpansionFactor, TextAlignment, CharacterSetIndex,
+    AlternateCharacterSetIndex, ColourTable, InterpolatedInterior,
+    HatchStyleDefinition, GeometricPatternDefinition
 )
 from commands_extended import (
     ColourSelectionMode, VdcExtent, VdcType, IntegerPrecision,
@@ -15,7 +26,7 @@ from commands_extended import (
     LineColour, TextColour, FillColour, BackgroundColour, CharacterHeight,
     LineWidth, LineType, DisjointPolyline, FontList, CharacterCodingAnnouncer,
     MetafileDefaultsReplacement, ScalingMode, LineWidthSpecificationMode,
-    CharacterOrientation, TextFontIndex
+    CharacterOrientation, TextFontIndex, MaximumVdcExtent
 )
 
 
@@ -69,7 +80,14 @@ class CommandFactory:
             3: lambda: BeginPicture(container),
             4: lambda: BeginPictureBody(container),
             5: lambda: EndPicture(container),
-            # Add more delimiter elements as needed
+            8: lambda: BeginFigure(container),
+            9: lambda: EndFigure(container),
+            21: lambda: BeginApplicationStructure(container),
+            22: lambda: BeginApplicationStructureBody(container),
+            23: lambda: EndApplicationStructure(container),
+            # Add more delimiter elements as needed:
+            # 6: BeginSegment
+            # 7: EndSegment
         }
         
         creator = commands.get(element_id)
@@ -82,17 +100,20 @@ class CommandFactory:
         commands = {
             1: lambda: MetafileVersion(container),
             2: lambda: MetafileDescription(container),
-            3: lambda: VdcType(container),
+            3: lambda: VdcType(container),  # Use proper VdcType from commands_extended
             4: lambda: IntegerPrecision(container),
             5: lambda: RealPrecision(container),
             6: lambda: IndexPrecision(container),
             7: lambda: ColourPrecision(container),
             8: lambda: ColourIndexPrecision(container),
+            9: lambda: MaximumColourIndex(container),
+            10: lambda: ColourValueExtent(container),
             11: lambda: MetafileElementList(container),
-            12: lambda: MetafileDefaultsReplacement(container),
             13: lambda: FontList(container),
+            14: lambda: CharacterSetList(container),
             15: lambda: CharacterCodingAnnouncer(container),
-            # Add more metafile descriptor elements as needed
+            17: lambda: MaximumVdcExtent(container),  # Proper implementation
+            21: lambda: FontProperties(container),
         }
         
         creator = commands.get(element_id)
@@ -106,9 +127,11 @@ class CommandFactory:
             1: lambda: ScalingMode(container),
             2: lambda: ColourSelectionMode(container),
             3: lambda: LineWidthSpecificationMode(container),
+            4: lambda: MarkerSizeSpecificationMode(container),
+            5: lambda: EdgeWidthSpecificationMode(container),
             6: lambda: VdcExtent(container),
             7: lambda: BackgroundColour(container),
-            # Add more picture descriptor elements as needed
+            17: lambda: LineAndEdgeTypeDefinition(container),
         }
         
         creator = commands.get(element_id)
@@ -121,6 +144,9 @@ class CommandFactory:
         commands = {
             1: lambda: VdcIntegerPrecision(container),
             2: lambda: VdcRealPrecision(container),
+            4: lambda: Transparency(container),
+            6: lambda: ClipIndicator(container),
+            19: lambda: LineTypeContinuation(container),
         }
         
         creator = commands.get(element_id)
@@ -134,24 +160,13 @@ class CommandFactory:
             1: lambda: Polyline(container),
             2: lambda: DisjointPolyline(container),
             4: lambda: Text(container),
+            5: lambda: RestrictedText(container),
             7: lambda: PolygonElement(container),
-            # Add more graphical primitives as needed:
-            # 3: Polymarker
-            # 5: RestrictedText
-            # 6: AppendText
-            # 8: PolyBezier
-            # 9: PolygonSet
-            # 10: CellArray
-            # 11: GeneralizedDrawingPrimitive
-            # 12: Rectangle
-            # 13: Circle
-            # 14: CircularArc3Point
-            # 15: CircularArc3PointClose
-            # 16: CircularArcCentre
-            # 17: CircularArcCentreClose
-            # 18: Ellipse
-            # 19: EllipticalArc
-            # 20: EllipticalArcClose
+            12: lambda: CircleElement(container),
+            15: lambda: CircularArcCentre(container),
+            17: lambda: EllipseElement(container),
+            18: lambda: EllipticalArc(container),
+            26: lambda: Polybezier(container),
         }
         
         creator = commands.get(element_id)
@@ -166,38 +181,26 @@ class CommandFactory:
             3: lambda: LineWidth(container),
             4: lambda: LineColour(container),
             10: lambda: TextFontIndex(container),
+            12: lambda: CharacterExpansionFactor(container),
             14: lambda: TextColour(container),
             15: lambda: CharacterHeight(container),
             16: lambda: CharacterOrientation(container),
+            18: lambda: TextAlignment(container),
+            19: lambda: CharacterSetIndex(container),
+            20: lambda: AlternateCharacterSetIndex(container),
+            22: lambda: InteriorStyle(container),
             23: lambda: FillColour(container),
-            # Add more attribute elements as needed:
-            # 1: LineBundleIndex
-            # 5: MarkerBundleIndex
-            # 6: MarkerType
-            # 7: MarkerSize
-            # 8: MarkerColour
-            # 9: TextBundleIndex
-            # 11: TextPrecision
-            # 12: CharacterExpansionFactor
-            # 13: CharacterSpacing
-            # 17: TextPath
-            # 18: TextAlignment
-            # 19: CharacterSetIndex
-            # 20: AlternateCharacterSetIndex
-            # 21: FillBundleIndex
-            # 22: InteriorStyle
-            # 24: HatchIndex
-            # 25: PatternIndex
-            # 26: EdgeBundleIndex
-            # 27: EdgeType
-            # 28: EdgeWidth
-            # 29: EdgeColour
-            # 30: EdgeVisibility
-            # 31: FillReferencePoint
-            # 32: PatternTable
-            # 33: PatternSize
-            # 34: ColourTable
-            # 35: AspectSourceFlags
+            27: lambda: EdgeType(container),
+            28: lambda: EdgeWidth(container),
+            29: lambda: EdgeColour(container),
+            30: lambda: EdgeVisibility(container),
+            34: lambda: ColourTable(container),
+            37: lambda: LineCap(container),
+            38: lambda: LineJoin(container),
+            42: lambda: RestrictedTextType(container),
+            44: lambda: InterpolatedInterior(container),
+            45: lambda: HatchStyleDefinition(container),
+            46: lambda: GeometricPatternDefinition(container),
         }
         
         creator = commands.get(element_id)
@@ -207,7 +210,13 @@ class CommandFactory:
     
     def _create_external_element(self, element_id: int, container):
         """Create external element commands"""
-        # Most external elements not yet implemented
+        commands = {
+            1: lambda: MessageCommand(container),
+        }
+        
+        creator = commands.get(element_id)
+        if creator:
+            return creator()
         return UnknownCommand(element_id, 7, container)
     
     def _create_segment_element(self, element_id: int, container):
@@ -217,5 +226,11 @@ class CommandFactory:
     
     def _create_application_structure(self, element_id: int, container):
         """Create application structure descriptor commands"""
-        # Most application structure elements not yet implemented
+        commands = {
+            1: lambda: ApplicationStructureAttribute(container),
+        }
+        
+        creator = commands.get(element_id)
+        if creator:
+            return creator()
         return UnknownCommand(element_id, 9, container)

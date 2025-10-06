@@ -375,12 +375,24 @@ class BinaryReader:
     
     def read_point_list(self) -> list:
         """Read a list of points from remaining arguments"""
-        # Calculate number of points from argument size
-        point_size = 2 * (self.cgm.vdc_integer_precision // 8 
-                         if self.cgm.vdc_type == VDCType.INTEGER 
-                         else 8)  # Simplified, should check VDC precision
+        # Calculate the size of a single coordinate based on VDC type and precision
+        if self.cgm.vdc_type == VDCType.INTEGER:
+            coord_size = self.cgm.vdc_integer_precision // 8
+        else:  # REAL
+            # Map precision enum to byte size
+            if self.cgm.vdc_real_precision in (Precision.FIXED_32, Precision.FLOATING_32):
+                coord_size = 4
+            elif self.cgm.vdc_real_precision in (Precision.FIXED_64, Precision.FLOATING_64):
+                coord_size = 8
+            else:
+                coord_size = 4  # Default fallback
         
-        n = self.argument_count // point_size if point_size > 0 else 0
+        # A point has 2 coordinates (x, y)
+        point_size = 2 * coord_size
+        
+        # Use length of arguments buffer
+        arg_length = len(self.arguments) if self.arguments else 0
+        n = arg_length // point_size if point_size > 0 else 0
         
         points = []
         for _ in range(n):
@@ -461,11 +473,25 @@ class BinaryReader:
         """Read Structured Data Record"""
         sdr = StructuredDataRecord()
         sdr_length = self._get_string_count()
-        start_pos = self.current_arg
+        start_pos = self.current_arg  # After reading length
         
+        DEBUG = False
+        if DEBUG:
+            print(f"=== SDR: start={start_pos}, length={sdr_length}, "
+                  f"end={start_pos + sdr_length}")
+        
+        member_num = 0
         while self.current_arg < (start_pos + sdr_length):
+            if DEBUG:
+                print(f"  Member {member_num}: pos={self.current_arg}, "
+                      f"remaining={start_pos + sdr_length - self.current_arg}")
+            
             data_type = StructuredDataType(self.read_index())
             data_count = self.read_int()
+            
+            if DEBUG:
+                print(f"    type={data_type}, count={data_count}")
+            
             data = []
             
             for _ in range(data_count):
@@ -488,7 +514,12 @@ class BinaryReader:
                 elif data_type == StructuredDataType.IF32:
                     data.append(self.read_signed_int32())
                 elif data_type == StructuredDataType.IX:
-                    data.append(self.read_index())
+                    if DEBUG:
+                        print(f"      Reading IX with index_precision={self.cgm.index_precision}")
+                    val = self.read_index()
+                    if DEBUG:
+                        print(f"      Read IX value: {val}, pos now {self.current_arg}")
+                    data.append(val)
                 elif data_type == StructuredDataType.R:
                     data.append(self.read_real())
                 elif data_type == StructuredDataType.S or data_type == StructuredDataType.SF:
@@ -504,9 +535,18 @@ class BinaryReader:
                 elif data_type == StructuredDataType.UI32:
                     data.append(self.read_signed_int32())
                 else:
-                    raise NotImplementedError(f"SDR data type {data_type} not implemented")
+                    raise NotImplementedError(f"SDR data type {data_type} "
+                                               "not implemented")
+            
+            if DEBUG:
+                print(f"    data={data}, new_pos={self.current_arg}")
             
             sdr.add(data_type, data_count, data)
+            member_num += 1
+        
+        if DEBUG:
+            print(f"=== SDR done: {member_num} members, "
+                  f"final_pos={self.current_arg}")
         
         return sdr
     
@@ -557,6 +597,12 @@ class BinaryReader:
         return (scale(r, min_vals[0], max_vals[0]),
                 scale(g, min_vals[1], max_vals[1]),
                 scale(b, min_vals[2], max_vals[2]))
+    
+    def size_of_direct_color(self) -> int:
+        """Get the size in bytes of a direct color value"""
+        precision = self.cgm.colour_precision
+        # RGB model uses 3 components
+        return 3 * precision // 8
     
     def unsupported(self, message: str):
         """Log an unsupported feature message"""

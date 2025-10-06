@@ -79,28 +79,28 @@ class DeviceViewportSpecificationModeEnum(Enum):
 
 class StructuredDataType(IntEnum):
     """Structured Data Record Types"""
-    SDR = 0
-    CI = 1
-    CD = 2
-    N = 3
-    E = 4
-    I = 5
-    RESERVED = 6
-    IF8 = 7
-    IF16 = 8
-    IF32 = 9
-    IX = 10
-    R = 11
-    S = 12
-    SF = 13
-    VC = 14
-    VDC = 15
-    CCO = 16
-    UI8 = 17
-    UI32 = 18
-    BS = 19
-    CL = 20
-    UI16 = 21
+    SDR = 1
+    CI = 2
+    CD = 3
+    N = 4
+    E = 5
+    I = 6
+    RESERVED = 7
+    IF8 = 8
+    IF16 = 9
+    IF32 = 10
+    IX = 11
+    R = 12
+    S = 13
+    SF = 14
+    VC = 15
+    VDC = 16
+    CCO = 17
+    UI8 = 18
+    UI32 = 19
+    BS = 20
+    CL = 21
+    UI16 = 22
 
 
 class DelimiterElement(IntEnum):

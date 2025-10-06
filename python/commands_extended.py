@@ -83,10 +83,11 @@ class VdcType(Command):
         if self.vdc_type == VDCType.INTEGER:
             writer.info("Writing vdctype = real instead of integer (as read by the binary file) because of some problems using integer. If the CGM file could not be opened in any viewer please edit file and change vdctype.")
             writer.write_line(f" vdctype real;")
+            # CRITICAL: Update the container's vdc_type so all subsequent coordinate writes format as REAL
+            self.container.vdc_type = VDCType.REAL
         else:
             writer.write_line(f" vdctype {self.write_enum(self.vdc_type)};")
-
-
+            self.container.vdc_type = self.vdc_type
 class IntegerPrecision(Command):
     """INTEGER PRECISION command (Class=1, Element=4)"""
     
@@ -101,7 +102,8 @@ class IntegerPrecision(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"INTEGERPREC {self.precision};")
+        val = int(2 ** self.precision / 2)
+        writer.write_line(f" integerprec -{val}, {val - 1} % {self.precision} binary bits %;")
 
 
 class IndexPrecision(Command):
@@ -118,7 +120,8 @@ class IndexPrecision(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"INDEXPREC {self.precision};")
+        val = int(2 ** self.precision / 2)
+        writer.write_line(f" indexprec -{val}, {val - 1} % {self.precision} binary bits %;")
 
 
 class ColourPrecision(Command):
@@ -135,7 +138,8 @@ class ColourPrecision(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"COLRPREC {self.precision};")
+        val = int(2 ** self.precision - 1)
+        writer.write_line(f" colrprec {val};")
 
 
 class ColourIndexPrecision(Command):
@@ -152,7 +156,16 @@ class ColourIndexPrecision(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"COLRINDEXPREC {self.precision};")
+        # C# uses signed max values for color index precision
+        if self.precision == 8:
+            val = 127  # sbyte.MaxValue
+        elif self.precision == 16:
+            val = 32767  # short.MaxValue  
+        elif self.precision == 24:
+            val = 65535  # ushort.MaxValue
+        else:
+            val = 2147483647  # int.MaxValue
+        writer.write_line(f" colrindexprec {val};")
 
 
 class RealPrecision(Command):
@@ -190,13 +203,19 @@ class RealPrecision(Command):
     def write_as_clear_text(self, writer):
         """Write as clear text"""
         if self.precision == Precision.FLOATING_32:
-            writer.write_line("REALPREC 0 9 23;")
+            # Format: min, max, mantissa % exponent binary bits %
+            writer.write_line(
+                " realprec -511.0000, 511.0000, 7 % 10 binary bits %;")
         elif self.precision == Precision.FLOATING_64:
-            writer.write_line("REALPREC 0 12 52;")
+            writer.write_line(
+                " realprec -1023.0000, 1023.0000, 15 % 13 binary bits %;")
         elif self.precision == Precision.FIXED_32:
-            writer.write_line("REALPREC 1 16 16;")
+            writer.write_line(
+                " realprec -32768.0000, 32767.0000, 16 % 16 binary bits %;")
         elif self.precision == Precision.FIXED_64:
-            writer.write_line("REALPREC 1 32 32;")
+            writer.write_line(
+                " realprec -2147483648.0000, 2147483647.0000, 32 "
+                "% 32 binary bits %;")
 
 
 class VdcIntegerPrecision(Command):
@@ -213,7 +232,10 @@ class VdcIntegerPrecision(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"  vdcintegerprec {self.precision};")
+        val = int(2 ** self.precision / 2)
+        writer.write_line(
+            f"  vdcintegerprec -{val}, {val - 1} "
+            f"% {self.precision} binary bits %;")
 
 
 class VdcRealPrecision(Command):
@@ -251,13 +273,21 @@ class VdcRealPrecision(Command):
     def write_as_clear_text(self, writer):
         """Write as clear text"""
         if self.precision == Precision.FLOATING_32:
-            writer.write_line("  vdcrealprec 0 9 23;")
+            writer.write_line(
+                "  vdcrealprec -511.0000, 511.0000, 7 "
+                "% 10 binary bits %;")
         elif self.precision == Precision.FLOATING_64:
-            writer.write_line("  vdcrealprec 0 12 52;")
+            writer.write_line(
+                "  vdcrealprec -1023.0000, 1023.0000, 15 "
+                "% 13 binary bits %;")
         elif self.precision == Precision.FIXED_32:
-            writer.write_line("  vdcrealprec 1 16 16;")
+            writer.write_line(
+                "  vdcrealprec -32768.0000, 32767.0000, 16 "
+                "% 16 binary bits %;")
         elif self.precision == Precision.FIXED_64:
-            writer.write_line("  vdcrealprec 1 32 32;")
+            writer.write_line(
+                "  vdcrealprec -2147483648.0000, 2147483647.0000, 32 "
+                "% 32 binary bits %;")
 
 
 # Graphical Primitive Commands (Class=4)
@@ -392,14 +422,17 @@ class BackgroundColour(Command):
     def __init__(self, container, color: CGMColor = None):
         super().__init__(2, 7, container)
         self.color = color or CGMColor()
+        self.rgb_color = (255, 255, 255)  # Default white
     
     def read_from_binary(self, reader):
         """Read from binary format"""
-        self.color = reader.read_color()
+        # Read direct color (RGB tuple)
+        self.rgb_color = reader.read_direct_color()
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line(f"  backcolr {self.write_color(self.color)};")
+        r, g, b = self.rgb_color
+        writer.write_line(f"  backcolr {r} {g} {b};")
 
 
 class CharacterHeight(Command):
@@ -559,7 +592,9 @@ class ScalingMode(Command):
         mode_names = {0: "abstract", 1: "metric"}
         mode_name = mode_names.get(self.mode, f"unknown({self.mode})")
         if self.mode == 1:
-            writer.write_line(f"  scalemode {mode_name} {self.write_real(self.metric_scale)};")
+            # Note: C# uses comma separator for metric scale
+            writer.write_line(
+                f"  scalemode {mode_name}, {self.write_real(self.metric_scale)};")
         else:
             writer.write_line(f"  scalemode {mode_name};")
 
@@ -622,3 +657,50 @@ class TextFontIndex(Command):
         """Write as clear text"""
         writer.write_line(f"  textfontindex {self.index};")
 
+
+
+class MaximumVdcExtent(Command):
+    """MAXIMUM VDC EXTENT command (Class=1, Element=17)"""
+    
+    def __init__(self, container, first_corner: CGMPoint = None, second_corner: CGMPoint = None):
+        super().__init__(1, 17, container)
+        self.first_corner = first_corner or CGMPoint(0, 0)
+        self.second_corner = second_corner or CGMPoint(0, 0)
+    
+    def read_from_binary(self, reader):
+        """Read from binary format"""
+        self.first_corner = reader.read_point()
+        self.second_corner = reader.read_point()
+    
+    def write_as_clear_text(self, writer):
+        """Write as clear text"""
+        writer.write_line(f" MAXVDCEXT {self.write_point(self.first_corner)} {self.write_point(self.second_corner)};")
+        writer.write_line("")  # Blank line after MAXVDCEXT
+
+
+class FontList(Command):
+    """FONT LIST command (Class=1, Element=13)"""
+    
+    def __init__(self, container, font_names: list = None):
+        super().__init__(1, 13, container)
+        self.font_names = font_names or []
+    
+    def read_from_binary(self, reader):
+        """Read from binary format"""
+        self.font_names = []
+        # Read fonts until end of arguments
+        while reader.current_arg < len(reader.arguments):
+            try:
+                font_name = reader.read_string()
+                if font_name:
+                    self.font_names.append(font_name)
+            except:
+                break
+    
+    def write_as_clear_text(self, writer):
+        """Write as clear text"""
+        if self.font_names:
+            fonts_str = ', '.join([f"'{name}'" for name in self.font_names])
+            writer.write_line(f" fontlist {fonts_str};")
+        else:
+            writer.write_line(" fontlist;")

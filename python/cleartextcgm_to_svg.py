@@ -137,21 +137,148 @@ class CGMToSVGConverter:
             3: "Courier, monospace",
             14: "Arial, sans-serif",  # Common in technical drawings
         }
+        
+        # Grouping and optimization
+        self.current_group_attributes = None
+        self.pending_lines = []  # For consolidating into polylines
+        self.groups = {}  # Layer/group organization
     
-    def convert_file(self, cgm_file: str, svg_file: str):
-        """Convert a clear text CGM file to SVG"""
-        with open(cgm_file, 'r', encoding='cp1252') as f:
+    def convert_file(self, cgm_path: str, svg_path: str):
+        """Convert CGM file to SVG"""
+        with open(cgm_path, 'r', encoding='cp1252') as f:
             content = f.read()
         
-        # Parse CGM content
-        self._parse_cgm(content)
+        lines = content.split('\n')
         
-        # Generate SVG
-        svg_content = self._generate_svg()
+        # First pass: parse metadata commands only
+        original_vdc_min = None
+        original_vdc_max = None
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Remove trailing semicolon if present
+            if line.endswith(';'):
+                line = line[:-1]
+            
+            # Only parse VDC extent commands in first pass
+            if line.startswith('vdcext') or line.startswith('MAXVDCEXT'):
+                if original_vdc_min is None:  # Store the first vdcext found
+                    original_vdc_min = self.vdc_extent_min
+                    original_vdc_max = self.vdc_extent_max
+                self._parse_command(line)
         
-        # Write SVG file
-        with open(svg_file, 'w', encoding='utf-8') as f:
+        # Auto-detect bounds and compare with parsed VDC extent
+        parsed_min = self.vdc_extent_min
+        parsed_max = self.vdc_extent_max
+        self._auto_detect_bounds(content)
+        
+        # If auto-detection found significantly different bounds, use those instead
+        auto_width = self.vdc_extent_max.x - self.vdc_extent_min.x
+        auto_height = self.vdc_extent_max.y - self.vdc_extent_min.y
+        parsed_width = parsed_max.x - parsed_min.x if parsed_max else 1000
+        parsed_height = parsed_max.y - parsed_min.y if parsed_max else 1000
+        
+        # If auto-detected bounds are significantly larger, use them
+        if auto_width > parsed_width * 10 or auto_height > parsed_height * 10:
+            print(f"Using auto-detected bounds: ({self.vdc_extent_min.x}, {self.vdc_extent_min.y}) to ({self.vdc_extent_max.x}, {self.vdc_extent_max.y})")
+        else:
+            # Restore parsed bounds  
+            self.vdc_extent_min = parsed_min
+            self.vdc_extent_max = parsed_max
+            print(f"Using parsed VDC extent: ({self.vdc_extent_min.x}, {self.vdc_extent_min.y}) to ({self.vdc_extent_max.x}, {self.vdc_extent_max.y})")
+        
+        # Second pass: parse all commands (skip VDC extent commands)
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Remove trailing semicolon if present
+            if line.endswith(';'):
+                line = line[:-1]
+            
+            # Skip VDC extent commands in second pass to preserve auto-detected bounds
+            if line.startswith('vdcext') or line.startswith('MAXVDCEXT'):
+                continue
+            
+            self._parse_command(line)
+        
+        # Generate and write SVG
+        self._write_svg(svg_path)
+
+    def _write_svg(self, svg_path: str):
+        """Write the SVG content to file"""
+        # Flush any pending lines before writing
+        self._flush_pending_lines()
+        
+        # Calculate viewBox based on the new coordinate system
+        cgm_width = self.vdc_extent_max.x - self.vdc_extent_min.x
+        cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
+        
+        # Use same scale as coordinate transformation
+        scale = 400.0 / cgm_width
+        viewbox_width = cgm_width * scale
+        viewbox_height = cgm_height * scale
+        
+        # Physical dimensions (typical technical drawing scale)
+        physical_width = viewbox_width / 40  # 1cm ≈ 40 units
+        physical_height = viewbox_height / 40
+        
+        svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<svg width="{physical_width:.1f}cm" height="{physical_height:.1f}cm" 
+     viewBox="0 0 {viewbox_width:.1f} {viewbox_height:.1f}"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style type="text/css">
+      polyline {{ stroke-linejoin: round; stroke-linecap: round; fill: none; }}
+      path {{ stroke-linejoin: round; stroke-linecap: round; fill: none; }}
+    </style>
+  </defs>
+  <!-- Generated from CGM by cleartextcgm_to_svg.py -->
+  <g id="cgm-content">
+"""
+        
+        # Add all elements
+        for element in self.elements:
+            svg_content += f"    {element}\n"
+        
+        svg_content += """  </g>
+</svg>"""
+        
+        with open(svg_path, 'w', encoding='utf-8') as f:
             f.write(svg_content)
+
+    def _auto_detect_bounds(self, content: str):
+        """Auto-detect coordinate bounds from drawing commands"""
+        all_coords = []
+        
+        # Extract all coordinate values from LINE, CIRCLE, etc.
+        lines = content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if any(line.startswith(cmd) for cmd in ['LINE', 'CIRCLE', 'ARCCTR', 'RESTRTEXT']):
+                coords = re.findall(r'([-+]?[\d.]+)', line)
+                # Take pairs of coordinates (x,y)
+                for i in range(0, len(coords) - 1, 2):
+                    try:
+                        x, y = float(coords[i]), float(coords[i + 1])
+                        all_coords.append((x, y))
+                    except (ValueError, IndexError):
+                        continue
+        
+        if all_coords:
+            xs, ys = zip(*all_coords)
+            min_x, max_x = min(xs), max(xs)
+            min_y, max_y = min(ys), max(ys)
+            
+            # Add some padding
+            padding = max((max_x - min_x), (max_y - min_y)) * 0.1
+            
+            # Override VDC extent with actual bounds
+            self.vdc_extent_min = Point(min_x - padding, min_y - padding)
+            self.vdc_extent_max = Point(max_x + padding, max_y + padding)
     
     def _parse_cgm(self, content: str):
         """Parse clear text CGM content"""
@@ -177,6 +304,8 @@ class CGMToSVGConverter:
             self._parse_begin_picture(line)
         elif line.startswith('vdcext'):
             self._parse_vdc_extent(line)
+        elif line.startswith('MAXVDCEXT'):
+            self._parse_max_vdc_extent(line)
         elif line.startswith('LINE'):
             self._parse_line(line)
         elif line.startswith('DISJTLINE'):
@@ -199,6 +328,50 @@ class CGMToSVGConverter:
             self._parse_text_font_index(line)
         elif line.startswith('charheight'):
             self._parse_character_height(line)
+        elif line.startswith('CIRCLE'):
+            self._parse_circle(line)
+        elif line.startswith('ARCCTR'):
+            self._parse_arc_center(line)
+        elif line.startswith('ELLIPARC'):
+            self._parse_elliptical_arc(line)
+        elif line.startswith('RESTRTEXT'):
+            self._parse_restricted_text(line)
+        elif line.startswith('COLRTABLE'):
+            self._parse_color_table(line)
+        elif line.startswith('BEGPICBODY'):
+            pass  # Picture body start - no action needed
+        elif line.startswith('ENDPIC'):
+            pass  # End picture - no action needed
+        elif line.startswith('ENDMF'):
+            pass  # End metafile - no action needed
+        elif line.startswith('MESSAGE'):
+            pass  # Message command - ignore for rendering
+        elif line.startswith('CLIP'):
+            self._parse_clip(line)
+        elif line.startswith('charori'):
+            self._parse_character_orientation(line)
+        elif line.startswith('TEXTALIGN'):
+            self._parse_text_alignment(line)
+        elif line.startswith('LINECAP'):
+            self._parse_line_cap(line)
+        elif line.startswith('LINEJOIN'):
+            self._parse_line_join(line)
+        elif line.startswith('EDGECOLR'):
+            self._parse_edge_color(line)
+        elif line.startswith('EDGEWIDTH'):
+            self._parse_edge_width(line)
+        elif line.startswith('INTSTYLE'):
+            self._parse_interior_style(line)
+        # Ignore setup commands that don't affect rendering directly
+        elif line.startswith(('MFVERSION', 'MFDESC', 'MFELEMLIST', 'fontlist', 
+                             'CHARSETLIST', 'VDCTYPE', 'COLRPREC', 'COLRINDEXPREC',
+                             'COLRVALUEEXT', 'MAXCOLRINDEX', 'INTEGERPREC', 'REALPREC',
+                             'charcoding', 'MAXVDCEXT', 'scalemode', 'colrmode',
+                             'EDGEWIDTHMODE', 'VDCREALPREC', 'linewidthmode',
+                             'ALTCHARSETINDEX', 'CHARSETINDEX', 'HATCHSTYLEDEF',
+                             'PATTERNDEFN', 'INTERPINT', 'TRANSPARENCY', 'EDGETYPE',
+                             'EDGEVIS', 'backcolr')):
+            pass  # Setup commands - ignore for rendering
         # Add more command parsers as needed
     
     def _parse_begin_metafile(self, line: str):
@@ -232,7 +405,45 @@ class CGMToSVGConverter:
             self.vdc_extent_max = Point(x2, y2)
     
     def _parse_line(self, line: str):
-        """Parse LINE command (polyline)"""
+        """Parse LINE command - creates separate polylines for each segment"""
+        points = self._extract_points(line)
+        if len(points) < 2:
+            return
+        
+        style = self._get_line_style()
+        
+        # CGM LINE contains multiple disconnected segments (pairs of points)
+        # Create separate polylines for each segment (every 2 points)
+        for i in range(0, len(points) - 1, 2):
+            if i + 1 < len(points):
+                p1 = self._transform_point(points[i])
+                p2 = self._transform_point(points[i + 1])
+                points_str = f'{p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f}'
+                
+                polyline_element = (f'<polyline points="{points_str}" '
+                                    f'{style} fill="none"/>')
+                self.elements.append(polyline_element)
+    
+    def _flush_pending_lines(self):
+        """Flush pending line segments as a consolidated polyline"""
+        if len(self.pending_lines) < 2:
+            self.pending_lines = []
+            return
+        
+        # Transform all points
+        svg_points = [self._transform_point(p) for p in self.pending_lines]
+        
+        # Create polyline element
+        points_str = ' '.join([f'{p.x:.2f},{p.y:.2f}' for p in svg_points])
+        style = self.current_group_attributes or self._get_line_style()
+        
+        polyline_element = f'<polyline points="{points_str}" {style} fill="none"/>'
+        self.elements.append(polyline_element)
+        
+        self.pending_lines = []
+    
+    def _parse_line_original(self, line: str):
+        """Original LINE parsing (kept for reference)"""
         points = self._extract_points(line)
         if len(points) < 2:
             return
@@ -353,6 +564,169 @@ class CGMToSVGConverter:
         match = re.search(r'charheight\s+([\d.]+)', line)
         if match:
             self.state.character_height = float(match.group(1))
+
+    def _parse_circle(self, line: str):
+        """Parse CIRCLE command"""
+        # Extract coordinates: CIRCLE cx cy radius
+        coords = re.findall(r'([-+]?[\d.]+)', line)
+        if len(coords) >= 3:
+            cx, cy, radius = map(float, coords[:3])
+            center = Point(cx, cy)
+            svg_center = self._transform_point(center)
+            svg_radius = self._transform_length(radius)
+            
+            style = self._get_line_style()
+            if self.state.fill_color:
+                style += f' fill="{self.state.fill_color.to_hex()}"'
+            else:
+                style += ' fill="none"'
+            
+            circle = f'<circle cx="{svg_center.x:.2f}" cy="{svg_center.y:.2f}" ' \
+                    f'r="{svg_radius:.2f}" {style}/>'
+            self.elements.append(circle)
+
+    def _parse_arc_center(self, line: str):
+        """Parse ARCCTR command (Arc Center)"""
+        # Flush pending lines before drawing arcs
+        self._flush_pending_lines()
+        
+        # Extract coordinates: ARCCTR cx cy dx1 dy1 dx2 dy2 radius
+        coords = re.findall(r'([-+]?[\d.]+)', line)
+        if len(coords) >= 7:
+            cx, cy, dx1, dy1, dx2, dy2, radius = map(float, coords[:7])
+            center = Point(cx, cy)
+            svg_center = self._transform_point(center)
+            svg_radius = self._transform_length(radius)
+            
+            # Skip very small arcs (likely rendering artifacts)
+            if svg_radius < 0.1:
+                return
+            
+            # Calculate start and end angles
+            import math
+            start_angle = math.degrees(math.atan2(dy1, dx1))
+            end_angle = math.degrees(math.atan2(dy2, dx2))
+            
+            # Calculate angle difference
+            angle_diff = end_angle - start_angle
+            if angle_diff < 0:
+                angle_diff += 360
+            
+            # Skip very small arc segments (less than 0.5 degrees)
+            if angle_diff < 0.5:
+                return
+            
+            # Approximate arc as polyline with multiple points
+            # Number of segments based on angle and radius
+            # More segments for larger angles and larger radii
+            num_segments = max(2, min(int(angle_diff / 2.0), 20))
+            
+            # Generate points along the arc
+            points = []
+            for i in range(num_segments + 1):
+                t = i / num_segments
+                angle = start_angle + t * angle_diff
+                x = (svg_center.x +
+                     svg_radius * math.cos(math.radians(angle)))
+                y = (svg_center.y +
+                     svg_radius * math.sin(math.radians(angle)))
+                points.append(f'{x:.2f},{y:.2f}')
+            
+            # Create polyline element
+            points_str = ' '.join(points)
+            style = self._get_line_style()
+            line_element = (f'<polyline points="{points_str}" '
+                            f'{style} fill="none"/>')
+            self.elements.append(line_element)
+
+    def _parse_elliptical_arc(self, line: str):
+        """Parse ELLIPARC command (Elliptical Arc)"""
+        # For now, treat as circle arc (simplified implementation)
+        # A full implementation would handle elliptical parameters
+        self._parse_arc_center(line)
+
+    def _parse_restricted_text(self, line: str):
+        """Parse RESTRTEXT command (Restricted Text)"""
+        # Extract: RESTRTEXT x y width height 'text'
+        coords = re.findall(r'([-+]?[\d.]+)', line)
+        text_match = re.search(r"'([^']*)'", line)
+        
+        if len(coords) >= 4 and text_match:
+            x, y, width, height = map(float, coords[:4])
+            text = text_match.group(1)
+            
+            if text:  # Only render non-empty text
+                position = Point(x, y)
+                svg_pos = self._transform_point(position)
+                svg_height = self._transform_length(self.state.character_height)
+                
+                color = self.state.text_color.to_hex()
+                
+                text_elem = f'<text x="{svg_pos.x:.2f}" y="{svg_pos.y:.2f}" ' \
+                           f'font-size="{svg_height:.2f}" fill="{color}">{text}</text>'
+                self.elements.append(text_elem)
+
+    def _parse_color_table(self, line: str):
+        """Parse COLRTABLE command"""
+        # Extract color index and RGB values: COLRTABLE index r g b [r g b ...]
+        parts = line.split()[1:]  # Skip command name
+        if len(parts) >= 4:
+            index = int(parts[0])
+            # Update color table (basic implementation)
+            # For full implementation, would store in color palette
+            pass
+
+    def _parse_clip(self, line: str):
+        """Parse CLIP command"""
+        # CLIP on/off - for now just ignore
+        pass
+
+    def _parse_character_orientation(self, line: str):
+        """Parse charori command (Character Orientation)"""
+        # Character orientation - for now just ignore
+        pass
+
+    def _parse_text_alignment(self, line: str):
+        """Parse TEXTALIGN command"""
+        # Text alignment - for now just ignore
+        pass
+
+    def _parse_line_cap(self, line: str):
+        """Parse LINECAP command"""
+        # Line cap style - for now just ignore
+        pass
+
+    def _parse_line_join(self, line: str):
+        """Parse LINEJOIN command"""
+        # Line join style - for now just ignore
+        pass
+
+    def _parse_edge_color(self, line: str):
+        """Parse EDGECOLR command"""
+        # Edge color - for now just ignore
+        pass
+
+    def _parse_edge_width(self, line: str):
+        """Parse EDGEWIDTH command"""
+        # Edge width - for now just ignore
+        pass
+
+    def _parse_interior_style(self, line: str):
+        """Parse INTSTYLE command"""
+        # Interior style - for now just ignore
+        pass
+
+    def _parse_max_vdc_extent(self, line: str):
+        """Parse MAXVDCEXT command to set maximum coordinate system"""
+        # Extract coordinates: MAXVDCEXT x1 y1 x2 y2
+        coords = re.findall(r'([-+]?[\d.]+)', line)
+        if len(coords) >= 4:
+            x1, y1, x2, y2 = map(float, coords[:4])
+            # Use MAXVDCEXT as fallback if no specific vdcext was set
+            if (self.vdc_extent_min.x == 0 and self.vdc_extent_min.y == 0 and
+                self.vdc_extent_max.x == 800 and self.vdc_extent_max.y == 600):
+                self.vdc_extent_min = Point(x1, y1)
+                self.vdc_extent_max = Point(x2, y2)
     
     def _parse_color(self, line: str) -> Optional[Color]:
         """Parse color specification (indexed or direct RGB)"""
@@ -385,46 +759,46 @@ class CGMToSVGConverter:
     
     def _transform_point(self, cgm_point: Point) -> Point:
         """Transform CGM coordinates to SVG coordinates"""
-        # Calculate scale factors
+        # Use a simple scale factor to get reasonable coordinate values
+        # Aim for a viewBox around 100-500 units wide
         cgm_width = self.vdc_extent_max.x - self.vdc_extent_min.x
         cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
         
         if cgm_width <= 0 or cgm_height <= 0:
             return Point(0, 0)
         
-        # Preserve aspect ratio
-        scale_x = self.svg_width / cgm_width
-        scale_y = self.svg_height / cgm_height
-        scale = min(scale_x, scale_y)
+        # Scale to get viewBox around 400 units wide
+        scale = 400.0 / cgm_width
         
-        # Center the drawing
-        svg_width_used = cgm_width * scale
-        svg_height_used = cgm_height * scale
-        offset_x = (self.svg_width - svg_width_used) / 2
-        offset_y = (self.svg_height - svg_height_used) / 2
-        
-        # Transform coordinates
-        x = (cgm_point.x - self.vdc_extent_min.x) * scale + offset_x
-        y = (cgm_point.y - self.vdc_extent_min.y) * scale + offset_y
+        # Transform coordinates relative to minimum point
+        x = (cgm_point.x - self.vdc_extent_min.x) * scale
+        y = (cgm_point.y - self.vdc_extent_min.y) * scale
         
         # Flip Y axis (CGM has origin at bottom-left, SVG at top-left)
-        y = self.svg_height - y
+        viewbox_height = cgm_height * scale
+        y = viewbox_height - y
         
         return Point(x, y)
     
     def _transform_length(self, cgm_length: float) -> float:
         """Transform CGM length to SVG length"""
         cgm_width = self.vdc_extent_max.x - self.vdc_extent_min.x
-        cgm_height = self.vdc_extent_max.y - self.vdc_extent_min.y
         
-        if cgm_width <= 0 or cgm_height <= 0:
+        if cgm_width <= 0:
             return cgm_length
         
-        scale_x = self.svg_width / cgm_width
-        scale_y = self.svg_height / cgm_height
-        scale = min(scale_x, scale_y)
+        # Use same scale as coordinate transformation
+        scale = 400.0 / cgm_width
         
-        return cgm_length * scale
+        # Apply scale and add a correction factor for line widths
+        # CGM line widths seem to be in wrong units - scale them down
+        transformed_width = cgm_length * scale
+        
+        # If the line width is more than 5% of drawing width, scale it down
+        if transformed_width > 20:  # 20 = 5% of 400
+            transformed_width = max(0.5, transformed_width * 0.01)  # Scale to 1%
+        
+        return transformed_width
     
     def _get_line_style(self) -> str:
         """Generate SVG style string for current line attributes"""
