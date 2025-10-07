@@ -847,32 +847,35 @@ class CGMToSVGConverter:
                 position = Point(x, y)
                 svg_pos = self._transform_point(position)
                 
-                # Calculate font size - match commercial at 138.65px
-                # Use height * scale * 1.388 to get ~138.65
+                # Calculate font size from height
+                # Commercial uses ~138.56px for height=2.5356
+                # So: font_size = height * scale * (138.56 / (2.5356 * 39.37))
                 svg_height = height * scale * 1.388
                 
-                # Commercial software uses text at a position calculated
-                # as text_x = 3100 * base_x (approximate constant)
-                # then applies transform to position and rotate correctly
-                
-                text_x = 3100.0 * base_x  # Commercial formula
+                # Use standard y position (all text in commercial uses y=2204.72)
                 standard_y = 2204.72
                 
-                # Calculate required translation:
-                # We want: base_x * text_x + tx = svg_pos.x
-                # So: tx = svg_pos.x - (base_x * text_x)
+                # Calculate text_x using formula: text_x = 2916.88 / base_x
+                # This is the average constant from commercial output
+                text_x = 2916.88 / base_x
+                
+                # Calculate translation to position text correctly
+                # Final X position should be: base_x * text_x + tx = svg_pos.x
                 tx = svg_pos.x - (base_x * text_x)
                 ty = svg_pos.y - standard_y
                 
                 color = self.state.text_color.to_hex()
                 
-                # Match commercial format with transform
+                # Match commercial format with transform matrix
+                # Format: matrix(scaleX skewY skewX scaleY translateX translateY)
                 text_elem = (
-                    f'   <g transform="matrix({base_x} 0 0 1 '
-                    f'{tx:.2f} {ty:.2f})">\n'
+                    f'   <g transform="matrix({base_x:.6f} 0 0 1 '
+                    f'{tx:.3f} {ty:.3f})">\n'
                     f'    <text x="{text_x:.2f}" '
                     f'y="{standard_y}" '
-                    f'font-size="{svg_height:.2f}" fill="{color}">'
+                    f'font-size="{svg_height:.2f}" '
+                    f'text-anchor="middle" '
+                    f'fill="{color}">'
                     f'{text}</text>\n'
                     f'   </g>')
                 self.elements.append(text_elem)
