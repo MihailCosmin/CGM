@@ -127,6 +127,8 @@ class GraphicsState:
         self.edge_width: float = 1.0  # Edge width for closed shapes
         self.edge_color: Color = Color(0, 0, 0)  # Black
         self.interior_style: str = "hollow"  # hollow, solid, pattern, hatch, empty
+        # Track if linewidth was set after edgevis off (re-enables stroking)
+        self.linewidth_reactivated: bool = False
         # Character orientation: (up_x, up_y), (base_x, base_y)
         self.char_orientation: tuple = ((0.0, 1.0), (1.0, 0.0))
         # Text alignment
@@ -600,9 +602,13 @@ class CGMToSVGConverter:
         svg_points = [self._transform_point(p) for p in points]
         
         # Build SVG path with cubic Bezier curves
-        # Rendering depends on edge_visible state:
-        # - If edge_visible is False (edgevis off): fill the path (typically for text)
-        # - If edge_visible is True (edgevis on): stroke the path (typically for drawings)
+        # Sequential CGM state logic (top to bottom):
+        # 1. edgevis off → disables all stroking (clears previous linewidth/linecolr)
+        # 2. linewidth X after edgevis off → re-enables stroking with previous linecolr
+        # 3. edgevis on → enables stroking normally
+        
+        # Determine if we should stroke or fill
+        should_stroke = self.state.edge_visible or self.state.linewidth_reactivated
         
         if continuity == 1:  # Discontinuous - groups of 4 points
             # Each curve is independent: start, control1, control2, end
@@ -615,14 +621,14 @@ class CGMToSVGConverter:
                 
                 path_data = f'M {p0.x:.2f},{p0.y:.2f} C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
                 
-                if not self.state.edge_visible:
-                    # edgevis off: fill the path (text characters)
-                    fill_color = self.state.fill_color.to_hex()
-                    path_element = f'<path d="{path_data}" style="fill:{fill_color}"/>'
-                else:
-                    # edgevis on: stroke the path (drawings)
+                if should_stroke:
+                    # Stroke the path (drawings)
                     line_style = self._get_line_style()
                     path_element = f'<path d="{path_data}" {line_style} fill="none"/>'
+                else:
+                    # Fill the path (text characters when edgevis off and linewidth not set)
+                    fill_color = self.state.fill_color.to_hex()
+                    path_element = f'<path d="{path_data}" style="fill:{fill_color}"/>'
                 
                 self.elements.append(path_element)
                 i += 4
@@ -648,14 +654,14 @@ class CGMToSVGConverter:
                 path_data += f' C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
                 i += 3
             
-            if not self.state.edge_visible:
-                # edgevis off: fill the path (text characters)
-                fill_color = self.state.fill_color.to_hex()
-                path_element = f'<path d="{path_data}" style="fill:{fill_color}"/>'
-            else:
-                # edgevis on: stroke the path (drawings)
+            if should_stroke:
+                # Stroke the path (drawings)
                 line_style = self._get_line_style()
                 path_element = f'<path d="{path_data}" {line_style} fill="none"/>'
+            else:
+                # Fill the path (text characters when edgevis off and linewidth not set)
+                fill_color = self.state.fill_color.to_hex()
+                path_element = f'<path d="{path_data}" style="fill:{fill_color}"/>'
             
             self.elements.append(path_element)
     
@@ -726,6 +732,9 @@ class CGMToSVGConverter:
         match = re.search(r'linewidth\s+([\d.]+)', line)
         if match:
             self.state.line_width = float(match.group(1))
+            # If edgevis is off, setting linewidth re-enables stroking
+            if not self.state.edge_visible:
+                self.state.linewidth_reactivated = True
     
     def _parse_line_type(self, line: str):
         """Parse linetype command"""
@@ -1113,8 +1122,11 @@ class CGMToSVGConverter:
         # edgevis on|off
         if 'on' in line.lower():
             self.state.edge_visible = True
+            self.state.linewidth_reactivated = False
         elif 'off' in line.lower():
             self.state.edge_visible = False
+            # edgevis off clears the linewidth reactivation flag
+            self.state.linewidth_reactivated = False
 
     def _parse_edge_width(self, line: str):
         """Parse EDGEWIDTH command"""
