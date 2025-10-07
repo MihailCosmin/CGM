@@ -159,6 +159,9 @@ class CGMToSVGConverter:
         self.current_group_attributes = None
         self.pending_lines = []  # For consolidating into polylines
         self.groups = {}  # Layer/group organization
+        
+        # Track if we're inside a FIGURE block (used for text character outlines)
+        self.in_figure = False
     
     def _get_scale(self) -> float:
         """Get the scaling factor from VDC to SVG coordinates"""
@@ -437,9 +440,9 @@ class CGMToSVGConverter:
         elif line.startswith('POLYBEZIER'):
             self._parse_polybezier(line)
         elif line.startswith(('BEGFIG', 'BEGFIGURE')):
-            pass  # Begin figure - grouping command
+            self.in_figure = True  # Enter figure block (text character)
         elif line.startswith(('ENDFIG', 'ENDFIGURE')):
-            pass  # End figure - grouping command
+            self.in_figure = False  # Exit figure block
         # Ignore setup commands that don't affect rendering directly
         elif line.startswith(('MFVERSION', 'MFDESC', 'MFELEMLIST', 'fontlist', 
                              'CHARSETLIST', 'VDCTYPE', 'COLRPREC', 'COLRINDEXPREC',
@@ -597,7 +600,7 @@ class CGMToSVGConverter:
         svg_points = [self._transform_point(p) for p in points]
         
         # Build SVG path with cubic Bezier curves
-        style = self._get_line_style()
+        # POLYBEZIER paths should be filled, not stroked
         
         if continuity == 1:  # Discontinuous - groups of 4 points
             # Each curve is independent: start, control1, control2, end
@@ -609,7 +612,7 @@ class CGMToSVGConverter:
                 p3 = svg_points[i + 3]
                 
                 path_data = f'M {p0.x:.2f},{p0.y:.2f} C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
-                path_element = f'<path d="{path_data}" {style} fill="none"/>'
+                path_element = f'<path d="{path_data}" style="fill:#000000"/>'
                 self.elements.append(path_element)
                 i += 4
         
@@ -634,7 +637,7 @@ class CGMToSVGConverter:
                 path_data += f' C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
                 i += 3
             
-            path_element = f'<path d="{path_data}" {style} fill="none"/>'
+            path_element = f'<path d="{path_data}" style="fill:#000000"/>'
             self.elements.append(path_element)
     
     def _parse_text(self, line: str):
@@ -677,17 +680,26 @@ class CGMToSVGConverter:
         svg_points = [self._transform_point(p) for p in points]
         points_str = ' '.join(str(p) for p in svg_points)
         
-        # Use edge style (respects edgevis on/off) instead of line style
-        edge_style = self._get_edge_style()
-        
-        # Check interior style for fill
-        if self.state.interior_style in ["hollow", "empty"]:
-            fill_style = 'fill="none"'
+        # When inside a FIGURE block (text characters), render as stroke-only outline
+        if self.in_figure:
+            # Use line style for stroke, no fill
+            line_style = self._get_line_style()
+            polygon_element = (f'<polyline points="{points_str}" '
+                              f'{line_style} fill="none"/>')
         else:
-            fill_style = f'fill="{self.state.fill_color.to_hex()}"'
+            # Normal polygon rendering with fill
+            # Use edge style (respects edgevis on/off) instead of line style
+            edge_style = self._get_edge_style()
+            
+            # Check interior style for fill
+            if self.state.interior_style in ["hollow", "empty"]:
+                fill_style = 'fill="none"'
+            else:
+                fill_style = f'fill="{self.state.fill_color.to_hex()}"'
+            
+            polygon_element = (f'<polygon points="{points_str}" '
+                              f'{edge_style} {fill_style}/>')
         
-        polygon_element = (f'<polygon points="{points_str}" '
-                           f'{edge_style} {fill_style}/>')
         self.elements.append(polygon_element)
     
     def _parse_line_width(self, line: str):
