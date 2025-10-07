@@ -129,6 +129,9 @@ class GraphicsState:
         self.interior_style: str = "hollow"  # hollow, solid, pattern, hatch, empty
         # Character orientation: (up_x, up_y), (base_x, base_y)
         self.char_orientation: tuple = ((0.0, 1.0), (1.0, 0.0))
+        # Text alignment
+        self.text_align_horiz: str = 'ctr'  # Horizontal alignment
+        self.text_align_vert: str = 'base'  # Vertical alignment
 
 
 class CGMToSVGConverter:
@@ -398,7 +401,7 @@ class CGMToSVGConverter:
             self._parse_clip(line)
         elif line.startswith(('charori', 'CHARORI')):
             self._parse_character_orientation(line)
-        elif line.startswith('TEXTALIGN'):
+        elif line.startswith(('textalign', 'TEXTALIGN')):
             self._parse_text_alignment(line)
         elif line.startswith('LINECAP'):
             self._parse_line_cap(line)
@@ -852,32 +855,54 @@ class CGMToSVGConverter:
                 # So: font_size = height * scale * (138.56 / (2.5356 * 39.37))
                 svg_height = height * scale * 1.388
                 
-                # Use standard y position (all text in commercial uses y=2204.72)
-                standard_y = 2204.72
-                
-                # Calculate text_x using formula: text_x = 2916.88 / base_x
-                # This is the average constant from commercial output
-                text_x = 2916.88 / base_x
-                
-                # Calculate translation to position text correctly
-                # Final X position should be: base_x * text_x + tx = svg_pos.x
-                tx = svg_pos.x - (base_x * text_x)
-                ty = svg_pos.y - standard_y
-                
                 color = self.state.text_color.to_hex()
                 
-                # Match commercial format with transform matrix
-                # Format: matrix(scaleX skewY skewX scaleY translateX translateY)
-                text_elem = (
-                    f'   <g transform="matrix({base_x:.6f} 0 0 1 '
-                    f'{tx:.3f} {ty:.3f})">\n'
-                    f'    <text x="{text_x:.2f}" '
-                    f'y="{standard_y}" '
-                    f'font-size="{svg_height:.2f}" '
-                    f'text-anchor="middle" '
-                    f'fill="{color}">'
-                    f'{text}</text>\n'
-                    f'   </g>')
+                # Check if text is rotated (base_x significantly different from 1.0)
+                is_rotated = abs(base_x - 1.0) > 0.01
+                
+                if is_rotated:
+                    # Rotated text: Use transform matrix approach
+                    # Use standard y position (all text in commercial uses y=2204.72)
+                    standard_y = 2204.72
+                    
+                    # Calculate text_x using formula: text_x = 2916.88 / base_x
+                    # This is the average constant from commercial output
+                    text_x = 2916.88 / base_x
+                    
+                    # Calculate translation to position text correctly
+                    # Final X position should be: base_x * text_x + tx = svg_pos.x
+                    tx = svg_pos.x - (base_x * text_x)
+                    ty = svg_pos.y - standard_y
+                    
+                    # Match commercial format with transform matrix
+                    # Format: matrix(scaleX skewY skewX scaleY translateX translateY)
+                    text_elem = (
+                        f'   <g transform="matrix({base_x:.6f} 0 0 1 '
+                        f'{tx:.3f} {ty:.3f})">\n'
+                        f'    <text x="{text_x:.2f}" '
+                        f'y="{standard_y}" '
+                        f'font-size="{svg_height:.2f}" '
+                        f'text-anchor="middle" '
+                        f'fill="{color}">'
+                        f'{text}</text>\n'
+                        f'   </g>')
+                else:
+                    # Non-rotated text: Use direct positioning
+                    # Adjust Y position for vertical alignment
+                    adjusted_y = svg_pos.y
+                    if self.state.text_align_vert == 'half':
+                        # 'half' means Y is at text middle, but SVG y is at baseline
+                        # Move baseline down by ~40% of font height (approximation)
+                        adjusted_y = svg_pos.y + (svg_height * 0.4)
+                    
+                    text_elem = (
+                        f'<text x="{svg_pos.x:.2f}" '
+                        f'y="{adjusted_y:.2f}" '
+                        f'font-size="{svg_height:.2f}" '
+                        f'text-anchor="middle" '
+                        f'fill="{color}">' 
+                        f'{text}</text>')
+                
                 self.elements.append(text_elem)
 
     def _parse_color_table(self, line: str):
@@ -916,8 +941,15 @@ class CGMToSVGConverter:
 
     def _parse_text_alignment(self, line: str):
         """Parse TEXTALIGN command"""
-        # Text alignment - for now just ignore
-        pass
+        # Format: textalign horiz, vert, horiz_offset, vert_offset
+        # horiz: normhoriz, left, ctr, right, conthoriz
+        # vert: normvert, top, cap, half, base, bottom, contvert
+        parts = line.lower().replace('textalign', '').strip().split(',')
+        if len(parts) >= 2:
+            horiz = parts[0].strip()
+            vert = parts[1].strip()
+            self.state.text_align_horiz = horiz
+            self.state.text_align_vert = vert
 
     def _parse_line_cap(self, line: str):
         """Parse LINECAP command"""
@@ -1056,6 +1088,11 @@ class CGMToSVGConverter:
     def _get_line_style(self) -> str:
         """Generate SVG style string for current line attributes"""
         width = self._transform_length(self.state.line_width)
+        
+        # Enforce minimum line width of 3px for visibility (matches commercial behavior)
+        if width < 3.0:
+            width = 3.0
+        
         color = self.state.line_color.to_hex()
         
         # Handle line types
