@@ -600,7 +600,9 @@ class CGMToSVGConverter:
         svg_points = [self._transform_point(p) for p in points]
         
         # Build SVG path with cubic Bezier curves
-        # POLYBEZIER paths should be filled, not stroked
+        # Rendering depends on edge_visible state:
+        # - If edge_visible is False (edgevis off): fill the path (typically for text)
+        # - If edge_visible is True (edgevis on): stroke the path (typically for drawings)
         
         if continuity == 1:  # Discontinuous - groups of 4 points
             # Each curve is independent: start, control1, control2, end
@@ -612,7 +614,16 @@ class CGMToSVGConverter:
                 p3 = svg_points[i + 3]
                 
                 path_data = f'M {p0.x:.2f},{p0.y:.2f} C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
-                path_element = f'<path d="{path_data}" style="fill:#000000"/>'
+                
+                if not self.state.edge_visible:
+                    # edgevis off: fill the path (text characters)
+                    fill_color = self.state.fill_color.to_hex()
+                    path_element = f'<path d="{path_data}" style="fill:{fill_color}"/>'
+                else:
+                    # edgevis on: stroke the path (drawings)
+                    line_style = self._get_line_style()
+                    path_element = f'<path d="{path_data}" {line_style} fill="none"/>'
+                
                 self.elements.append(path_element)
                 i += 4
         
@@ -637,7 +648,15 @@ class CGMToSVGConverter:
                 path_data += f' C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
                 i += 3
             
-            path_element = f'<path d="{path_data}" style="fill:#000000"/>'
+            if not self.state.edge_visible:
+                # edgevis off: fill the path (text characters)
+                fill_color = self.state.fill_color.to_hex()
+                path_element = f'<path d="{path_data}" style="fill:{fill_color}"/>'
+            else:
+                # edgevis on: stroke the path (drawings)
+                line_style = self._get_line_style()
+                path_element = f'<path d="{path_data}" {line_style} fill="none"/>'
+            
             self.elements.append(path_element)
     
     def _parse_text(self, line: str):
