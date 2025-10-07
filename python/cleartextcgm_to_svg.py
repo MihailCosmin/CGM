@@ -573,7 +573,8 @@ class CGMToSVGConverter:
         svg_points = [self._transform_point(p) for p in points]
         points_str = ' '.join(str(p) for p in svg_points)
         
-        line_style = self._get_line_style()
+        # Use edge style (respects edgevis on/off) instead of line style
+        edge_style = self._get_edge_style()
         
         # Check interior style for fill
         if self.state.interior_style in ["hollow", "empty"]:
@@ -582,7 +583,7 @@ class CGMToSVGConverter:
             fill_style = f'fill="{self.state.fill_color.to_hex()}"'
         
         polygon_element = (f'<polygon points="{points_str}" '
-                           f'{line_style} {fill_style}/>')
+                           f'{edge_style} {fill_style}/>')
         self.elements.append(polygon_element)
     
     def _parse_line_width(self, line: str):
