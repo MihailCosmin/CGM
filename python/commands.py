@@ -630,7 +630,7 @@ class BeginFigure(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line("BEGFIG;")
+        writer.write_line(" BEGFIGURE;")
 
 
 class EndFigure(Command):
@@ -645,7 +645,7 @@ class EndFigure(Command):
     
     def write_as_clear_text(self, writer):
         """Write as clear text"""
-        writer.write_line("ENDFIG;")
+        writer.write_line(" ENDFIGURE;")
 
 
 class BeginApplicationStructure(Command):
@@ -1138,12 +1138,93 @@ class Polybezier(Command):
     
     def __init__(self, container):
         super().__init__(4, 26, container)
+        self.continuity_indicator = 2  # 1=discontinuous, 2=continuous
+        self.curves = []  # List of BezierCurves (each is a list of CGMPoints)
         
     def read_from_binary(self, reader):
-        pass
+        """Read POLYBEZIER from binary CGM
+        
+        Continuity indicator:
+        - 1: discontinuous - each curve has 4 independent points
+        - 2: continuous - first curve has 4 points, subsequent curves share endpoint
+        """
+        self.continuity_indicator = reader.read_index()
+        
+        if self.continuity_indicator == 1:
+            # Discontinuous: groups of 4 points per curve
+            # Each curve: start, control1, control2, end
+            remaining_bytes = len(reader.arguments) - reader.current_arg
+            point_size = self._size_of_point(reader)
+            
+            if remaining_bytes % (4 * point_size) != 0:
+                raise ValueError(f"Invalid PolyBezier args for continuity {self.continuity_indicator}")
+            
+            n = remaining_bytes // (4 * point_size)
+            
+            for _ in range(n):
+                curve = []
+                curve.append(reader.read_point())
+                curve.append(reader.read_point())
+                curve.append(reader.read_point())
+                curve.append(reader.read_point())
+                self.curves.append(curve)
+                
+        elif self.continuity_indicator == 2:
+            # Continuous: first curve 4 points, then 3 points per curve
+            # First curve: start, control1, control2, end
+            # Subsequent: control1, control2, end (shares start with previous end)
+            remaining_bytes = len(reader.arguments) - reader.current_arg
+            point_size = self._size_of_point(reader)
+            
+            # First curve needs 4 points, then groups of 3
+            # Total points = 4 + 3*(n-1) where n is number of curves
+            # So remaining_bytes = point_size * (4 + 3*(n-1))
+            # = point_size * (1 + 3*n)
+            
+            if (remaining_bytes - point_size) % (3 * point_size) != 0:
+                raise ValueError(f"Invalid PolyBezier args for continuity {self.continuity_indicator}")
+            
+            n = (remaining_bytes - point_size) // (3 * point_size)
+            
+            for i in range(n):
+                curve = []
+                if i == 0:
+                    # First curve: read all 4 points
+                    curve.append(reader.read_point())
+                # All curves: read 3 points (control1, control2, end)
+                curve.append(reader.read_point())
+                curve.append(reader.read_point())
+                curve.append(reader.read_point())
+                self.curves.append(curve)
+        else:
+            reader.unsupported(f"Unsupported continuity indicator {self.continuity_indicator}")
+    
+    def _size_of_point(self, reader):
+        """Calculate size of a point in bytes based on VDC type and precision"""
+        from cgm_enums import VDCType, Precision
+        
+        if reader.cgm.vdc_type == VDCType.INTEGER:
+            # Integer VDC: precision in bits, 2 coords per point
+            return (reader.cgm.vdc_integer_precision // 8) * 2
+        else:
+            # Real VDC: depends on precision type
+            prec = reader.cgm.vdc_real_precision
+            if prec in (Precision.FIXED_32, Precision.FLOATING_32):
+                return 4 * 2  # 4 bytes per coord, 2 coords
+            elif prec in (Precision.FIXED_64, Precision.FLOATING_64):
+                return 8 * 2  # 8 bytes per coord, 2 coords
+            else:
+                return 4 * 2  # Default
         
     def write_as_clear_text(self, writer):
-        writer.write_line("  POLYBEZIER unbroken 0 0 ;")
+        """Write POLYBEZIER to cleartext CGM"""
+        writer.write(f" POLYBEZIER {self.continuity_indicator}")
+        
+        for curve in self.curves:
+            for point in curve:
+                writer.write(f" ({point.x},{point.y})")
+        
+        writer.write_line(";")
 
 # Additional AttributeElements (Class 5)
 class CharacterExpansionFactor(Command):

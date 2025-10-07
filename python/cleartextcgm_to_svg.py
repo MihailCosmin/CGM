@@ -173,7 +173,7 @@ class CGMToSVGConverter:
         
         lines = content.split('\n')
         
-        # Join multi-line commands (lines ending with comma)
+        # Join multi-line commands (lines ending with comma or lines that are continuations)
         joined_lines = []
         current_line = ""
         for line in lines:
@@ -187,13 +187,24 @@ class CGMToSVGConverter:
             else:
                 current_line = line
             
-            # If line doesn't end with comma, it's complete
-            if not line.endswith(','):
+            # If line ends with semicolon, it's complete
+            # (Some commands span multiple lines without commas but end with semicolon)
+            if line.endswith(';'):
                 # Remove trailing semicolon
-                if current_line.endswith(';'):
-                    current_line = current_line[:-1]
+                current_line = current_line[:-1]
                 joined_lines.append(current_line)
                 current_line = ""
+            # If line doesn't end with comma and doesn't start with '(',
+            # AND current_line doesn't start with a multi-line command, it's complete
+            elif not line.endswith(','):
+                # Check if this is a continuation line (starts with '(' or is part of a multi-line command)
+                is_continuation = line.startswith('(')
+                is_multiline_cmd = any(current_line.startswith(cmd) for cmd in ['POLYBEZIER', 'colrtable', 'COLRTABLE'])
+                
+                if not is_continuation and not is_multiline_cmd:
+                    joined_lines.append(current_line)
+                    current_line = ""
+                # else: keep accumulating for multi-line command
         
         # First pass: parse metadata commands only
         original_vdc_min = None
@@ -405,6 +416,10 @@ class CGMToSVGConverter:
             pass  # Message command - ignore for rendering
         elif line.startswith('CLIP'):
             self._parse_clip(line)
+        elif line.startswith(('BEGAPS', 'BEGAPSBODY')):
+            pass  # Application structure - just continue parsing
+        elif line.startswith('ENDAPS'):
+            pass  # End application structure - no action needed
         elif line.startswith(('charori', 'CHARORI')):
             self._parse_character_orientation(line)
         elif line.startswith(('textalign', 'TEXTALIGN')):
@@ -419,6 +434,12 @@ class CGMToSVGConverter:
             self._parse_edge_width(line)
         elif line.startswith('intstyle'):
             self._parse_interior_style(line)
+        elif line.startswith('POLYBEZIER'):
+            self._parse_polybezier(line)
+        elif line.startswith(('BEGFIG', 'BEGFIGURE')):
+            pass  # Begin figure - grouping command
+        elif line.startswith(('ENDFIG', 'ENDFIGURE')):
+            pass  # End figure - grouping command
         # Ignore setup commands that don't affect rendering directly
         elif line.startswith(('MFVERSION', 'MFDESC', 'MFELEMLIST', 'fontlist', 
                              'CHARSETLIST', 'VDCTYPE', 'COLRPREC', 'COLRINDEXPREC',
@@ -427,7 +448,8 @@ class CGMToSVGConverter:
                              'EDGEWIDTHMODE', 'VDCREALPREC', 'linewidthmode',
                              'ALTCHARSETINDEX', 'CHARSETINDEX', 'HATCHSTYLEDEF',
                              'PATTERNDEFN', 'INTERPINT', 'TRANSPARENCY', 'EDGETYPE',
-                             'EDGEVIS', 'backcolr')):
+                             'EDGEVIS', 'backcolr', 'APSATTR', 
+                             'RESTRTEXTTYPE')):
             pass  # Setup commands - ignore for rendering
         # Add more command parsers as needed
     
@@ -538,6 +560,82 @@ class CGMToSVGConverter:
                 path_data = f"M {p1} L {p2}"
                 path_element = f'<path d="{path_data}" {style} fill="none"/>'
                 self.elements.append(path_element)
+    
+    def _parse_polybezier(self, line: str):
+        """Parse POLYBEZIER command - Bezier curves
+        
+        Format: POLYBEZIER <continuity_indicator> (x1,y1) (x2,y2) (x3,y3) ...
+        continuity_indicator: 1 = discontinuous (broken), 2 = continuous (unbroken)
+        
+        For discontinuous: groups of 4 points per curve
+        For continuous: first curve has 4 points, subsequent curves add 3 points each
+        """
+        # Extract continuity indicator (1 or 2)
+        parts = line.split()
+        if len(parts) < 2:
+            return
+        
+        # The indicator is the first numeric value after POLYBEZIER
+        continuity = None
+        try:
+            continuity = int(parts[1])
+        except ValueError:
+            # Might be "unbroken" or "broken" text instead of number
+            if 'unbroken' in line.lower():
+                continuity = 2
+            elif 'broken' in line.lower():
+                continuity = 1
+            else:
+                return
+        
+        # Extract all points from the command
+        points = self._extract_points(line)
+        if len(points) < 4:
+            return  # Need at least 4 points for a single Bezier curve
+        
+        # Transform points to SVG coordinates
+        svg_points = [self._transform_point(p) for p in points]
+        
+        # Build SVG path with cubic Bezier curves
+        style = self._get_line_style()
+        
+        if continuity == 1:  # Discontinuous - groups of 4 points
+            # Each curve is independent: start, control1, control2, end
+            i = 0
+            while i + 3 < len(svg_points):
+                p0 = svg_points[i]
+                p1 = svg_points[i + 1]
+                p2 = svg_points[i + 2]
+                p3 = svg_points[i + 3]
+                
+                path_data = f'M {p0.x:.2f},{p0.y:.2f} C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
+                path_element = f'<path d="{path_data}" {style} fill="none"/>'
+                self.elements.append(path_element)
+                i += 4
+        
+        else:  # Continuous (2) - first curve is 4 points, then 3 points per curve
+            if len(svg_points) < 4:
+                return
+            
+            # Start with first 4 points
+            p0 = svg_points[0]
+            p1 = svg_points[1]
+            p2 = svg_points[2]
+            p3 = svg_points[3]
+            
+            path_data = f'M {p0.x:.2f},{p0.y:.2f} C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
+            
+            # Add subsequent curves (3 points each: control1, control2, end)
+            i = 4
+            while i + 2 < len(svg_points):
+                p1 = svg_points[i]
+                p2 = svg_points[i + 1]
+                p3 = svg_points[i + 2]
+                path_data += f' C {p1.x:.2f},{p1.y:.2f} {p2.x:.2f},{p2.y:.2f} {p3.x:.2f},{p3.y:.2f}'
+                i += 3
+            
+            path_element = f'<path d="{path_data}" {style} fill="none"/>'
+            self.elements.append(path_element)
     
     def _parse_text(self, line: str):
         """Parse TEXT command"""
