@@ -173,18 +173,32 @@ class CGMToSVGConverter:
         
         lines = content.split('\n')
         
+        # Join multi-line commands (lines ending with comma)
+        joined_lines = []
+        current_line = ""
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('%'):
+                continue
+            
+            # Accumulate lines that end with comma
+            if current_line:
+                current_line += " " + line
+            else:
+                current_line = line
+            
+            # If line doesn't end with comma, it's complete
+            if not line.endswith(','):
+                # Remove trailing semicolon
+                if current_line.endswith(';'):
+                    current_line = current_line[:-1]
+                joined_lines.append(current_line)
+                current_line = ""
+        
         # First pass: parse metadata commands only
         original_vdc_min = None
         original_vdc_max = None
-        for line_num, line in enumerate(lines, 1):
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Remove trailing semicolon if present
-            if line.endswith(';'):
-                line = line[:-1]
-            
+        for line in joined_lines:
             # Only parse VDC extent commands in first pass
             if line.startswith('vdcext') or line.startswith('MAXVDCEXT'):
                 if original_vdc_min is None:  # Store the first vdcext found
@@ -213,15 +227,7 @@ class CGMToSVGConverter:
             print(f"Using parsed VDC extent: ({self.vdc_extent_min.x}, {self.vdc_extent_min.y}) to ({self.vdc_extent_max.x}, {self.vdc_extent_max.y})")
         
         # Second pass: parse all commands (skip VDC extent commands)
-        for line_num, line in enumerate(lines, 1):
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Remove trailing semicolon if present
-            if line.endswith(';'):
-                line = line[:-1]
-            
+        for line in joined_lines:
             # Skip VDC extent commands in second pass to preserve auto-detected bounds
             if line.startswith('vdcext') or line.startswith('MAXVDCEXT'):
                 continue
