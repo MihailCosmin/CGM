@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="98.4cm" height="98.4cm" 
+     viewBox="0 0 3937.0 3937.0"
+     xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style type="text/css">
+      polyline { stroke-linejoin: round; stroke-linecap: round; fill: none; }
+      path { stroke-linejoin: round; stroke-linecap: round; fill: none; }
+    </style>
+  </defs>
+  <!-- Generated from CGM by cleartextcgm_to_svg.py -->
+  <g id="cgm-content">
+    <!-- Metafile: Test Edge Visibility -->
+    <!-- Picture: Test Picture -->
+    <circle cx="984.25" cy="984.25" r="393.70" stroke="#000000" stroke-width="39.37" fill="#0002ff"/>
+    <circle cx="2952.75" cy="984.25" r="393.70" stroke="none" fill="#0002ff"/>
+    <circle cx="984.25" cy="2952.75" r="393.70" stroke="#000000" stroke-width="39.37" fill="#0002ff"/>
+    <circle cx="2952.75" cy="2952.75" r="393.70" stroke="none" fill="#ffffff"/>
+  </g>
+</svg>

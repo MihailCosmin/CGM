@@ -72,12 +72,16 @@ class Color:
         return f"#{self.r:02x}{self.g:02x}{self.b:02x}"
     
     @classmethod
-    def from_index(cls, index: int) -> 'Color':
-        """Create color from CGM color index using standard palette"""
-        # Standard CGM color palette
+    def from_index(cls, index: int, color_table: dict[int, 'Color'] = None) -> 'Color':
+        """Create color from CGM color index using custom table or standard palette"""
+        # Check custom color table first
+        if color_table and index in color_table:
+            return color_table[index]
+        
+        # Fall back to standard CGM color palette
         palette = [
             (255, 255, 255),  # 0: White (background)
-            (0, 0, 0),        # 1: Black
+            (0, 0, 0),        # 1: Black (foreground)
             (255, 0, 0),      # 2: Red
             (0, 255, 0),      # 3: Green
             (0, 0, 255),      # 4: Blue
@@ -108,6 +112,9 @@ class Color:
 class GraphicsState:
     """Current graphics state"""
     def __init__(self):
+        # Color table for custom color definitions
+        self.color_table: dict = {}
+        
         self.line_width: float = 1.0
         self.line_type: LineType = LineType.SOLID
         self.line_color: Color = Color(0, 0, 0)  # Black
@@ -236,12 +243,13 @@ class CGMToSVGConverter:
         viewbox_width = cgm_width * scale
         viewbox_height = cgm_height * scale
         
-        # Physical dimensions (typical technical drawing scale)
-        physical_width = viewbox_width / 40  # 1cm ≈ 40 units
-        physical_height = viewbox_height / 40
+        # Physical dimensions in inches (1000 viewbox units = 1 inch)
+        # This matches commercial CGM software output
+        physical_width = viewbox_width / 1000  # inches
+        physical_height = viewbox_height / 1000  # inches
         
         svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg width="{physical_width:.1f}cm" height="{physical_height:.1f}cm" 
+<svg width="{physical_width:.5f}in" height="{physical_height:.5f}in" 
      viewBox="0 0 {viewbox_width:.1f} {viewbox_height:.1f}"
      xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -298,11 +306,27 @@ class CGMToSVGConverter:
         """Parse clear text CGM content"""
         lines = content.split('\n')
         
+        # Join multi-line commands (lines ending with comma)
+        joined_lines = []
+        current_line = ""
         for line in lines:
             line = line.strip()
             if not line or line.startswith('%'):
                 continue
             
+            # Accumulate lines that end with comma
+            if current_line:
+                current_line += " " + line
+            else:
+                current_line = line
+            
+            # If line doesn't end with comma, it's complete
+            if not line.endswith(','):
+                joined_lines.append(current_line)
+                current_line = ""
+        
+        # Parse joined lines
+        for line in joined_lines:
             # Remove trailing semicolon
             if line.endswith(';'):
                 line = line[:-1]
@@ -352,8 +376,16 @@ class CGMToSVGConverter:
             self._parse_elliptical_arc(line)
         elif line.startswith('RESTRTEXT'):
             self._parse_restricted_text(line)
-        elif line.startswith('COLRTABLE'):
+        elif line.startswith('COLRTABLE') or line.startswith('colrtable'):
             self._parse_color_table(line)
+        elif line.startswith('edgevis'):
+            self._parse_edge_visibility(line)
+        elif line.startswith('EDGEWIDTH'):
+            self._parse_edge_width(line)
+        elif line.startswith('EDGECOLR'):
+            self._parse_edge_color(line)
+        elif line.startswith('intstyle'):
+            self._parse_interior_style(line)
         elif line.startswith('BEGPICBODY'):
             pass  # Picture body start - no action needed
         elif line.startswith('ENDPIC'):
@@ -846,14 +878,24 @@ class CGMToSVGConverter:
                 self.elements.append(text_elem)
 
     def _parse_color_table(self, line: str):
-        """Parse COLRTABLE command"""
-        # Extract color index and RGB values: COLRTABLE index r g b [r g b ...]
-        parts = line.split()[1:]  # Skip command name
-        if len(parts) >= 4:
-            index = int(parts[0])
-            # Update color table (basic implementation)
-            # For full implementation, would store in color palette
-            pass
+        """Parse COLRTABLE/colrtable command"""
+        # Format: colrtable start_index r g b, r g b, ...;
+        # Example: colrtable 0 255 255 255, 0 0 0;
+        
+        # Remove command name and extract numbers
+        content = line.replace('colrtable', '').replace('COLRTABLE', '')
+        # Remove commas and semicolons for easier parsing
+        content = content.replace(',', ' ').replace(';', '')
+        numbers = [int(x) for x in content.split() if x.strip()]
+        
+        if len(numbers) >= 4:
+            start_index = numbers[0]
+            # Parse RGB triplets starting from index 1
+            for i in range(1, len(numbers), 3):
+                if i + 2 < len(numbers):
+                    r, g, b = numbers[i], numbers[i+1], numbers[i+2]
+                    color_index = start_index + (i - 1) // 3
+                    self.state.color_table[color_index] = Color(r, g, b)
 
     def _parse_clip(self, line: str):
         """Parse CLIP command"""
@@ -895,6 +937,14 @@ class CGMToSVGConverter:
             index = int(coords[0])
             self.state.edge_color = Color.from_index(index)
 
+    def _parse_edge_visibility(self, line: str):
+        """Parse edgevis command"""
+        # edgevis on|off
+        if 'on' in line.lower():
+            self.state.edge_visible = True
+        elif 'off' in line.lower():
+            self.state.edge_visible = False
+
     def _parse_edge_width(self, line: str):
         """Parse EDGEWIDTH command"""
         coords = re.findall(r'([\d.]+)', line)
@@ -925,14 +975,14 @@ class CGMToSVGConverter:
     
     def _parse_color(self, line: str) -> Optional[Color]:
         """Parse color specification (indexed or direct RGB)"""
-        # Try indexed color first: colorcommand 5
-        index_match = re.search(r'\s+(\d+)$', line)
+        # Try indexed color first: colorcommand 5 or colorcommand 5;
+        index_match = re.search(r'\s+(\d+)\s*;?\s*$', line)
         if index_match:
             index = int(index_match.group(1))
-            return Color.from_index(index)
+            return Color.from_index(index, self.state.color_table)
         
-        # Try direct RGB: colorcommand 255 128 64
-        rgb_match = re.search(r'\s+(\d+)\s+(\d+)\s+(\d+)$', line)
+        # Try direct RGB: colorcommand 255 128 64 or colorcommand 255 128 64;
+        rgb_match = re.search(r'\s+(\d+)\s+(\d+)\s+(\d+)\s*;?\s*$', line)
         if rgb_match:
             r, g, b = map(int, rgb_match.groups())
             return Color(r, g, b)
@@ -985,18 +1035,17 @@ class CGMToSVGConverter:
         # Use same scale as coordinate transformation
         scale = self._get_scale()
         
-        # Apply scale and add a correction factor for line widths
-        # CGM line widths seem to be in wrong units - scale them down
+        # Apply scale directly without any corrections
         transformed_width = cgm_length * scale
-        
-        # If the line width is more than 5% of drawing width, scale it down
-        if transformed_width > 20:  # 20 = 5% of 400
-            transformed_width = max(0.5, transformed_width * 0.01)  # Scale to 1%
         
         return transformed_width
     
     def _get_edge_style(self) -> str:
         """Generate SVG style for edges (circles, ellipses, etc)"""
+        # Check if edge is visible
+        if not self.state.edge_visible:
+            return 'stroke="none"'
+        
         width = self._transform_length(self.state.edge_width)
         color = self.state.edge_color.to_hex()
         return f'stroke="{color}" stroke-width="{width:.2f}"'
