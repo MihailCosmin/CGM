@@ -142,7 +142,8 @@ class CGMToSVGConverter:
     def __init__(self, width: int = 800, height: int = 600):
         self.svg_width = width
         self.svg_height = height
-        self.elements: List[str] = []
+        self.elements: List[str] = []  # Shape elements (lines, polygons, etc.)
+        self.text_elements: List[str] = []  # Text elements (rendered last)
         self.state = GraphicsState()
         
         # CGM coordinate system
@@ -289,8 +290,12 @@ class CGMToSVGConverter:
   <g id="cgm-content">
 """
         
-        # Add all elements
+        # Add all shape elements first
         for element in self.elements:
+            svg_content += f"    {element}\n"
+        
+        # Add all text elements last (so they appear on top)
+        for element in self.text_elements:
             svg_content += f"    {element}\n"
         
         svg_content += """  </g>
@@ -705,7 +710,7 @@ class CGMToSVGConverter:
             
             text_element = (f'<text x="{svg_point.x}" y="{svg_point.y}" '
                             f'{text_style}>{text_content}</text>')
-            self.elements.append(text_element)
+            self.text_elements.append(text_element)
     
     def _parse_polygon(self, line: str):
         """Parse POLYGON command"""
@@ -1013,6 +1018,14 @@ class CGMToSVGConverter:
                 
                 color = self.state.text_color.to_hex()
                 
+                # Map CGM text alignment to SVG text-anchor
+                anchor_map = {
+                    'left': 'start',
+                    'ctr': 'middle',
+                    'right': 'end'
+                }
+                text_anchor = anchor_map.get(self.state.text_align_horiz, 'middle')
+                
                 # Check if text is rotated (base_x significantly different from 1.0)
                 is_rotated = abs(base_x - 1.0) > 0.01
                 
@@ -1038,7 +1051,7 @@ class CGMToSVGConverter:
                         f'    <text x="{text_x:.2f}" '
                         f'y="{standard_y}" '
                         f'font-size="{svg_height:.2f}" '
-                        f'text-anchor="middle" '
+                        f'text-anchor="{text_anchor}" '
                         f'fill="{color}">'
                         f'{text}</text>\n'
                         f'   </g>')
@@ -1055,11 +1068,11 @@ class CGMToSVGConverter:
                         f'<text x="{svg_pos.x:.2f}" '
                         f'y="{adjusted_y:.2f}" '
                         f'font-size="{svg_height:.2f}" '
-                        f'text-anchor="middle" '
+                        f'text-anchor="{text_anchor}" '
                         f'fill="{color}">' 
                         f'{text}</text>')
                 
-                self.elements.append(text_elem)
+                self.text_elements.append(text_elem)
 
     def _parse_color_table(self, line: str):
         """Parse COLRTABLE/colrtable command"""
@@ -1293,7 +1306,9 @@ class CGMToSVGConverter:
         
         svg_footer = '</svg>'
         
-        return svg_header + '\n'.join(self.elements) + '\n' + svg_footer
+        # Render shapes first, then text on top (painter's algorithm - text always visible)
+        all_elements = self.elements + self.text_elements
+        return svg_header + '\n'.join(all_elements) + '\n' + svg_footer
 
 
 def main():
