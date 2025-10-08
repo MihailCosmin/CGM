@@ -695,9 +695,11 @@ class CGMToSVGConverter:
             font_family = self.font_families.get(
                 self.state.text_font_index, "Arial, sans-serif")
             
-            # Calculate font size - use character height with same scale
-            # as coordinates
-            font_size = self.state.character_height * self._get_scale()
+            # Calculate font size - use character height with same scale as coordinates
+            # Apply 1.388 multiplier to match commercial output (same as RESTRTEXT)
+            # This accounts for the difference between CGM character height units
+            # and actual rendered font size in SVG
+            font_size = self.state.character_height * self._get_scale() * 1.388
             
             text_style = (f'fill="{self.state.text_color.to_hex()}" '
                           f'font-family="{font_family}" '
