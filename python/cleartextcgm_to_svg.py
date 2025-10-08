@@ -148,6 +148,7 @@ class CGMToSVGConverter:
         # CGM coordinate system
         self.vdc_extent_min = Point(0, 0)
         self.vdc_extent_max = Point(1000, 1000)
+        self.metric_scale_factor = 1.0  # From scalemode metric command
         
         # Font mapping
         self.font_families = {
@@ -169,7 +170,8 @@ class CGMToSVGConverter:
         """Get the scaling factor from VDC to SVG coordinates"""
         # Use the standard scale of 39.37 (1000mm per inch / 25.4mm per inch)
         # This matches commercial CGM viewers
-        return 39.37
+        # Multiply by metric_scale_factor from scalemode command
+        return 39.37 * self.metric_scale_factor
     
     def convert_file(self, cgm_path: str, svg_path: str):
         """Convert CGM file to SVG"""
@@ -445,11 +447,13 @@ class CGMToSVGConverter:
             self.in_figure = True  # Enter figure block (text character)
         elif line.startswith(('ENDFIG', 'ENDFIGURE')):
             self.in_figure = False  # Exit figure block
+        elif line.startswith('scalemode'):
+            self._parse_scalemode(line)
         # Ignore setup commands that don't affect rendering directly
         elif line.startswith(('MFVERSION', 'MFDESC', 'MFELEMLIST', 'fontlist', 
                              'CHARSETLIST', 'VDCTYPE', 'COLRPREC', 'COLRINDEXPREC',
                              'COLRVALUEEXT', 'MAXCOLRINDEX', 'INTEGERPREC', 'REALPREC',
-                             'charcoding', 'MAXVDCEXT', 'scalemode', 'colrmode',
+                             'charcoding', 'MAXVDCEXT', 'colrmode',
                              'EDGEWIDTHMODE', 'VDCREALPREC', 'linewidthmode',
                              'ALTCHARSETINDEX', 'CHARSETINDEX', 'HATCHSTYLEDEF',
                              'PATTERNDEFN', 'INTERPINT', 'TRANSPARENCY', 'EDGETYPE',
@@ -487,6 +491,13 @@ class CGMToSVGConverter:
             x2, y2 = map(float, coords[1].split(','))
             self.vdc_extent_min = Point(x1, y1)
             self.vdc_extent_max = Point(x2, y2)
+    
+    def _parse_scalemode(self, line: str):
+        """Parse scalemode command to get metric scaling factor"""
+        # Format: scalemode metric, 0.0081;
+        match = re.search(r'scalemode\s+metric\s*,\s*([\d.]+)', line, re.IGNORECASE)
+        if match:
+            self.metric_scale_factor = float(match.group(1))
     
     def _parse_line(self, line: str):
         """Parse LINE command - line or polyline by point count"""
@@ -1331,7 +1342,9 @@ def main():
         # Report statistics
         with open(output_file, 'r') as f:
             svg_content = f.read()
-            element_count = svg_content.count('<path') + svg_content.count('<text') + svg_content.count('<polygon')
+            element_count = (svg_content.count('<path') + svg_content.count('<text') + 
+                           svg_content.count('<polygon') + svg_content.count('<line') + 
+                           svg_content.count('<polyline') + svg_content.count('<circle'))
             print(f"Generated {element_count} SVG elements")
         
     except Exception as e:
