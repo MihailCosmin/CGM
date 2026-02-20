@@ -12,16 +12,25 @@ import os
 from cgm_file import convert_binary_to_cleartext, BinaryCGMFile, ClearTextCGMFile
 
 
-def main():
-    """Main entry point"""
-    if len(sys.argv) < 2:
-        print("Usage: python main.py <input_binary_cgm> [output_cleartext_cgm]")
-        print("\nExample:")
-        print("  python main.py sample.cgm sample.txt")
-        print("  python main.py sample.cgm  # creates sample.txt")
-        sys.exit(1)
+def main(input_file=None, output_file=None):
+    """Main entry point
     
-    input_file = sys.argv[1]
+    Can be called directly with arguments:
+        main(input_file="sample.cgm", output_file="sample.txt")
+    Or from the command line:
+        python main.py sample.cgm sample.txt
+    """
+    # If no arguments provided, fall back to sys.argv
+    if input_file is None:
+        if len(sys.argv) < 2:
+            print("Usage: python main.py <input_binary_cgm> [output_cleartext_cgm]")
+            print("\nExample:")
+            print("  python main.py sample.cgm sample.txt")
+            print("  python main.py sample.cgm  # creates sample.txt")
+            print("\nOr call directly:")
+            print('  main(input_file="sample.cgm", output_file="sample.txt")')
+            sys.exit(1)
+        input_file = sys.argv[1]
     
     # Check if input file exists
     if not os.path.exists(input_file):
@@ -29,12 +38,13 @@ def main():
         sys.exit(1)
     
     # Determine output filename
-    if len(sys.argv) >= 3:
-        output_file = sys.argv[2]
-    else:
-        # Replace extension with .txt
-        base_name = os.path.splitext(input_file)[0]
-        output_file = base_name + ".txt"
+    if output_file is None:
+        if len(sys.argv) >= 3:
+            output_file = sys.argv[2]
+        else:
+            # Replace extension with .txt
+            base_name = os.path.splitext(input_file)[0]
+            output_file = base_name + ".txt"
     
     print(f"Converting CGM file:")
     print(f"  Input:  {input_file}")
@@ -97,4 +107,7 @@ def test_read_binary():
 
 
 if __name__ == "__main__":
-    main()
+    main(
+        input_file=r"C:\Users\munte\Develop\pyCGM\dist\ICN-C0419-S1000D0361-001-01.CGM",
+        output_file=r"C:\Users\munte\Develop\pyCGM\dist\ICN-C0419-S1000D0361-001-01_cleartext2.CGM"
+    )
