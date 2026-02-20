@@ -1,0 +1,4 @@
+Example:
+
+dotnet run --project src/ConvertCgmToCleartext.csproj ICN-C0419-S1000D0397-001-01.CGM ICN-C0419-S1000D0397-001-01_cleartext.CGM
+
